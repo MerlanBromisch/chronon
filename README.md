@@ -37,7 +37,16 @@ uv run chronon eval /tmp/scene                            # analyze a synth fold
 ```
 
 `chronon analyze` prints, for each file, where it starts in the reference (seconds), how much
-faster its clock runs (ppm) and a confidence between 0 and 1.
+faster its clock runs (ppm) and a confidence between 0 and 1 (the share of measurement windows
+that agree). Files that share too little sound with the reference are flagged
+`NO RELIABLE MATCH` instead of getting a made-up number.
+
+A multitrack desk can be given as several reference tracks; each file is then aligned to the
+track it matches best (often a room or ambience mic):
+
+```sh
+uv run chronon analyze -r desk/ch01.wav -r desk/ch02.wav ... zoom.wav camera.mp4
+```
 
 `chronon synth` writes one WAV per clip plus a `truth.json` holding each device's true start times
 and clock drift. Presets: `basic`, `drift`, `multiclip`, `music`.

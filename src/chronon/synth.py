@@ -5,8 +5,11 @@ module, because only here do we know the exact answer.
 
 Model
 -----
-One "true" sound field (the source signal) is recorded by several devices. Each
-device has its own clock, which runs at ``1 + drift_ppm * 1e-6`` times real time.
+A "true" sound field is recorded by several devices. It holds one or more
+independent sources (``signal`` plus ``extra_signals``); each device picks up each
+source with its own gain and acoustic delay (``pickup``), so, as in a real room, the
+lag between two devices depends on which source is dominant. Each device has its
+own clock, which runs at ``1 + drift_ppm * 1e-6`` times real time.
 A clip that starts at true time ``start_s`` holds, at file sample ``n`` (played
 back at the nominal ``sample_rate``), the sound at true time::
 
@@ -14,6 +17,9 @@ back at the nominal ``sample_rate``), the sound at true time::
 
 So positive drift means the device clock runs fast and the file comes out longer
 than the real time span it covers. ``duration_s`` of a clip is that real time span.
+``wander_ms`` bends the clock away from that straight line by up to that much in the
+middle of each clip (a parabola, zero at both ends), like a clock whose rate drifts
+with temperature.
 
 Device colouration (reverb, filters, gain, noise, polarity) is applied after
 sampling, at the device rate. The source is band-limited to 20 % of its sample
@@ -32,7 +38,7 @@ from scipy.io import wavfile
 
 SIGNALS = ("speech", "music", "noise")
 TRUTH_FILE = "truth.json"
-TRUTH_VERSION = 1
+TRUTH_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -57,10 +63,20 @@ class Device:
     lowpass_hz: float | None = None
     rt60_s: float | None = None
     invert: bool = False
+    pickup: tuple[tuple[float, float], ...] = ()  # per source: (gain_db, delay_ms)
+    wander_ms: float = 0.0
 
     def true_time(self, clip: Clip, n: np.ndarray | float) -> np.ndarray | float:
         """True time (s) of file sample ``n`` of ``clip``."""
-        return clip.start_s + n / (self.sample_rate * (1 + self.drift_ppm * 1e-6))
+        t = clip.start_s + n / (self.sample_rate * (1 + self.drift_ppm * 1e-6))
+        if self.wander_ms:
+            u = n / self.num_samples(clip)
+            t = t + self.wander_ms * 1e-3 * 4 * u * (1 - u)
+        return t
+
+    def sources(self) -> tuple[tuple[float, float], ...]:
+        """(gain_db, delay_ms) per source; by default only source 0, directly."""
+        return self.pickup or ((0.0, 0.0),)
 
     def num_samples(self, clip: Clip) -> int:
         return round(clip.duration_s * self.sample_rate * (1 + self.drift_ppm * 1e-6))
@@ -72,6 +88,7 @@ class Scenario:
     signal: str = "speech"
     seed: int = 0
     source_rate: int = 48_000
+    extra_signals: tuple[str, ...] = ()
 
     @property
     def duration_s(self) -> float:
@@ -164,28 +181,41 @@ def _normalise(x: np.ndarray, rms_db: float) -> np.ndarray:
 
 def render(scenario: Scenario) -> list[RenderedClip]:
     """Render every clip of every device. Deterministic for a given seed."""
-    seeds = np.random.SeedSequence(scenario.seed).spawn(1 + len(scenario.devices))
-    source = make_source(
-        scenario.signal, scenario.duration_s, scenario.source_rate, np.random.default_rng(seeds[0])
-    )
+    n_dev = len(scenario.devices)
+    # child seeds do not depend on the spawn count, so extra sources leave the rest unchanged
+    seeds = np.random.SeedSequence(scenario.seed).spawn(1 + n_dev + len(scenario.extra_signals))
+    source_seeds = [seeds[0], *seeds[1 + n_dev :]]
+    sources = [
+        make_source(kind, scenario.duration_s, scenario.source_rate, np.random.default_rng(sd))
+        for kind, sd in zip((scenario.signal, *scenario.extra_signals), source_seeds, strict=True)
+    ]
     out = []
-    for device, seed in zip(scenario.devices, seeds[1:], strict=True):
+    for device, seed in zip(scenario.devices, seeds[1 : 1 + n_dev], strict=True):
+        if len(device.sources()) > len(sources):
+            raise ValueError(f"device {device.name!r} picks up more sources than exist")
         rng = np.random.default_rng(seed)
         for i, clip in enumerate(device.clips):
-            audio = _record(source, scenario.source_rate, device, clip, rng)
+            audio = _record(sources, scenario.source_rate, device, clip, rng)
             out.append(RenderedClip(device, clip, i, audio))
     return out
 
 
 def _record(
-    source: np.ndarray, source_rate: int, device: Device, clip: Clip, rng: np.random.Generator
+    sources: list[np.ndarray],
+    source_rate: int,
+    device: Device,
+    clip: Clip,
+    rng: np.random.Generator,
 ) -> np.ndarray:
     fs = device.sample_rate
     ir = _reverb_ir(device.rt60_s, fs, rng) if device.rt60_s else None
     pre = len(ir) - 1 if ir is not None else 0  # pre-roll so the reverb tail is already there
     n = np.arange(-pre, device.num_samples(clip))
     t = device.true_time(clip, n)
-    x = np.interp(t * source_rate, np.arange(len(source)), source, left=0.0, right=0.0)
+    x = np.zeros(len(n))
+    for source, (gain_db, delay_ms) in zip(sources, device.sources(), strict=False):
+        pos = (t - delay_ms * 1e-3) * source_rate
+        x += 10 ** (gain_db / 20) * np.interp(pos, np.arange(len(source)), source, 0.0, 0.0)
     if ir is not None:
         x = sps.fftconvolve(x, ir)[: len(x)]
     x = x[pre:]
@@ -255,6 +285,7 @@ def truth(scenario: Scenario, rendered: list[RenderedClip]) -> dict:
         "version": TRUTH_VERSION,
         "convention": "t_true = start_s + n / (sample_rate * (1 + drift_ppm * 1e-6))",
         "signal": scenario.signal,
+        "extra_signals": list(scenario.extra_signals),
         "seed": scenario.seed,
         "source_rate": scenario.source_rate,
         "devices": devices,
