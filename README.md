@@ -2,7 +2,7 @@
 
 **Automatic waveform-based sync for multi-device recordings — with clock drift correction.**
 
-> Status: early development. Offset and drift measurement works; no export yet.
+> Status: early development. Offset/drift measurement and corrected audio export work; no timeline export yet.
 
 ## Why
 
@@ -46,6 +46,17 @@ track it matches best (often a room or ambience mic):
 
 ```sh
 uv run chronon analyze -r desk/ch01.wav -r desk/ch02.wav ... zoom.wav camera.mp4
+```
+
+`chronon correct` writes new audio files on one common timeline: clock drift removed and sample
+rate converted in one step (default 48 kHz), padded with silence so every file starts at timeline
+zero (`--no-pad` to skip), camera audio taken from the video files. Originals are only read; the
+output folder must be a separate one. Every written file is measured again against the reference
+and the export fails if it is not in sync. A report (`chronon-report.txt` / `.json`) lists what
+was done.
+
+```sh
+uv run chronon correct -r desk/ch18.wav zoom.wav camera.mp4 -o ~/Desktop/synced
 ```
 
 `chronon synth` writes one WAV per clip plus a `truth.json` holding each device's true start times

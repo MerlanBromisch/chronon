@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from chronon import __version__, align, audio, synth
+from chronon import __version__, align, audio, correct, synth
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -37,6 +38,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p.add_argument("files", nargs="+", help="recordings to align to the reference")
 
+    p = commands.add_parser(
+        "correct", help="write drift- and rate-corrected audio on one timeline, then verify it"
+    )
+    p.add_argument(
+        "-r",
+        "--ref",
+        action="append",
+        default=[],
+        metavar="TRACK",
+        help="reference track(s), as for analyze. Default: the first file",
+    )
+    p.add_argument("files", nargs="+", help="recordings to correct")
+    p.add_argument(
+        "-o", "--out", required=True, help="output folder (must not be a folder holding any input)"
+    )
+    p.add_argument("--rate", type=int, default=48_000, help="output sample rate (default 48000)")
+    p.add_argument(
+        "--no-pad",
+        dest="pad",
+        action="store_false",
+        help="do not pad with silence to timeline zero",
+    )
+    p.add_argument(
+        "--format",
+        choices=correct.FORMATS,
+        default="auto",
+        help="auto = WAV, or CAF for files over 2 GiB",
+    )
+    p.add_argument("--overwrite", action="store_true", help="replace existing output files")
+
     p = commands.add_parser("eval", help="run analyze on a 'chronon synth' folder and compare")
     p.add_argument("scene", help="folder written by 'chronon synth'")
 
@@ -46,6 +77,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _synth(args)
         if args.command == "analyze":
             return _analyze(args)
+        if args.command == "correct":
+            return _correct(args)
         if args.command == "eval":
             return _eval(args)
     except (audio.AudioError, ValueError) as e:
@@ -83,6 +116,30 @@ def _analyze(args: argparse.Namespace) -> int:
             + ", ".join(_notes(a, Path(refs[ref_index]).name if len(refs) > 1 else None))
         )
     return 0
+
+
+def _correct(args: argparse.Namespace) -> int:
+    refs, files = (args.ref, args.files) if args.ref else (args.files[:1], args.files[1:])
+    if not files:
+        raise ValueError("nothing to correct: give a reference and at least one more file")
+    outputs = correct.run(
+        refs, files, args.out, args.rate, args.pad, args.format, args.overwrite, progress=_progress
+    )
+    print(correct.format_report(outputs))
+    print(f"report: {Path(args.out) / 'chronon-report.txt'}")
+    failed = [o for o in outputs if o.verified is False]
+    if failed:
+        print(f"{len(failed)} file(s) failed verification", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _progress(what: str, done: int, total: int) -> None:
+    if not sys.stderr.isatty():
+        return
+    pct = 100 * done / total if total else 100
+    end = "\n" if done >= total else ""
+    print(f"\r{what}: {pct:5.1f} %", end=end, file=sys.stderr, flush=True)
 
 
 def _notes(a: align.Alignment, via: str | None) -> list[str]:

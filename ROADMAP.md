@@ -9,7 +9,8 @@ These apply to every stage and decide trade-offs.
 - **Honest progress.** Show how long the sync will still take (time remaining), based on the
   work actually left, not a bar that just moves.
 - **Small memory footprint.** Under 1 GB peak, independent of recording length. Today: about
-  10 GB for a 4 h reference, because whole files are held in memory.
+  10 GB for a 4 h reference (22 GB for `correct` on the musical), because analysis holds whole
+  files in memory.
 - **Accurate and honest results.** Every file within 0.1 ms where the material allows it, and
   a clear "no reliable match" instead of a made-up number.
 
@@ -20,9 +21,10 @@ These apply to every stage and decide trade-offs.
 - [x] Coarse offset search on downsampled audio, sample-accurate refinement
 - [x] Drift measurement (windowed cross-correlation + consensus line fit) — `chronon analyze`
 - [x] Pick the best of several sample-parallel reference tracks (`--ref` repeated)
-- [ ] Drift correction (concept: [docs/export.md](docs/export.md))
-- [ ] Write corrected audio files: drift + sample rate in one step, padded to timeline zero, verified
-- [ ] Separate camera audio and correct it like any other source (video never re-encoded)
+- [x] Drift correction (concept: [docs/export.md](docs/export.md))
+- [x] Write corrected audio files: drift + sample rate in one step, padded to timeline zero, verified — `chronon correct`
+- [x] Separate camera audio and correct it like any other source (video never re-encoded)
+- [ ] BWF time stamp in unpadded files; join clips per device
 - [ ] Selectable time reference
 - [ ] FCPXML export (Final Cut Pro, Logic Pro)
 
