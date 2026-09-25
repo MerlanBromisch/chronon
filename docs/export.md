@@ -20,10 +20,31 @@ output folder.
   converted in one step** (e.g. x32 at 44 099.47 Hz real → 48 000 Hz), so all files can be
   dropped into Logic without any conversion there. Exact rate ratio, high-quality resampling;
   never ffmpeg `asetrate` with a fractional rate (it silently truncates to an integer).
-- **Padded with silence to timeline zero**: every file starts at 0 and is dropped into Logic
-  at 0. (Simplest for the user; chosen over BWF time stamps.)
+- **Padding is optional** (default on): padded files start at timeline zero and are dropped
+  into Logic at 0. Unpadded files start with their own audio (no minutes of silence before a
+  short take in the middle of a long recording) and carry their timeline position as a BWF
+  time stamp (Logic: move region to recorded position — to verify) and in the timeline file.
+- **Timeline zero = the earliest start of any file.** Nothing is cut off; the reference is
+  padded too when something started before it.
 - Bit depth and channel layout as in the source; target rate is a setting (default 48 kHz).
-- The reference is also written (padded), so every output file shares the same zero.
+- The reference is also written, so every output file shares the same zero.
+- **One output file per clip** by default. Optionally the clips of a device are joined into
+  one file per device, gaps filled with silence.
+- **Format:** WAV by default. A file that would exceed 2 GiB is written as CAF instead (WAV
+  and AIFF are limited to 4 GiB, some programs already fail at 2 GiB) and the report says
+  so. The format can also be fixed by the user. CAF / RF64 support in Logic and Final Cut
+  must be verified.
+
+## Devices
+
+A device is a group of files that share one clock: the split files of a Zoom take, the
+halves filmed by one camera, all channels of a desk. Chronon groups them automatically
+(folder, file name pattern such as `ZOOM…`, `C23…`, `R62_…`, header metadata such as the
+recorder model) and the user can correct the grouping.
+
+- Analysis: all clips of a device share one drift, so short clips profit from long ones,
+  and any channel of a desk can serve as its reference (as `analyze -r` does today).
+- Export: per clip or joined per device (see above).
 
 ## Video
 
@@ -50,11 +71,7 @@ output folder.
 
 ## Open points
 
-- **Timeline zero** — the earliest start of any file (nothing is cut; the reference is padded
-  too) or the reference start (material before it is cut off).
-- **Several files per device** (Zoom split at 2 GiB, camera halves) — one output file per
-  device with gaps as silence (one track per device in Logic), or one per clip.
-- **Files over 4 GiB** (4 h stereo 24-bit ≈ 4.1 GB exceeds the WAV limit) — RF64 or CAF;
-  must be checked in Logic and Final Cut.
+- **CAF / RF64 in Logic and Final Cut** — test before relying on them.
+- **BWF time stamp placement in Logic** for unpadded files — test.
 - **Video in Logic** — whether Logic's FCPXML import places the movie, or Chronon must state
   the movie start offset to enter by hand. Needs testing.

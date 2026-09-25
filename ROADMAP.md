@@ -27,6 +27,7 @@ These apply to every stage and decide trade-offs.
 - [ ] FCPXML export (Final Cut Pro, Logic Pro)
 
 ## Stage 2 — Robustness
+- [ ] Devices: group files sharing a clock (auto + manual), one drift per device
 - [ ] Many clips per source; chain clips that only overlap with other sources
 - [x] Confidence from window agreement; flag files without a reliable match
 - [ ] Resolve conflicting matches between files
