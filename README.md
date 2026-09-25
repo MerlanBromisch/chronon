@@ -2,7 +2,7 @@
 
 **Automatic waveform-based sync for multi-device recordings — with clock drift correction.**
 
-> Status: early planning. Nothing to install yet.
+> Status: early development. No sync yet — only the test signal generator.
 
 ## Why
 
@@ -23,6 +23,19 @@ Chronon aims to fill that gap: drop in a folder of media, get back perfectly ali
 Ideas for later: sub-sample phase alignment of mics, clap/slate detection, device drift profiles, transcript markers, speaker-based multicam pre-cut.
 
 See [ROADMAP.md](ROADMAP.md).
+
+## Development
+
+Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/).
+
+```sh
+uv sync
+uv run pytest
+uv run chronon synth /tmp/scene --preset drift   # synthetic recordings with known offset and drift
+```
+
+`chronon synth` writes one WAV per clip plus a `truth.json` holding each device's true start times
+and clock drift. Presets: `basic`, `drift`, `multiclip`, `music`.
 
 ## Name
 

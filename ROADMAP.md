@@ -1,6 +1,8 @@
 # Roadmap
 
 ## Stage 1 — Core (CLI / drop app)
+- [x] Project setup (uv, pytest, ruff, CI on Linux + macOS)
+- [x] Synthetic test scenarios with known offset / drift (`chronon synth`)
 - [ ] Decode audio from any audio/video file (ffmpeg)
 - [ ] Coarse offset search on downsampled audio, sample-accurate refinement
 - [ ] Drift measurement (windowed cross-correlation + linear fit) and correction
