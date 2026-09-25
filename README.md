@@ -2,7 +2,7 @@
 
 **Automatic waveform-based sync for multi-device recordings — with clock drift correction.**
 
-> Status: early development. Offset/drift measurement and corrected audio export work; no timeline export yet.
+> Status: early development. Measurement, corrected audio and Final Cut Pro timeline export work.
 
 ## Why
 
@@ -58,6 +58,17 @@ was done.
 ```sh
 uv run chronon correct -r desk/ch18.wav zoom.wav camera.mp4 -o ~/Desktop/synced
 ```
+
+Both `correct` and `sync` write a Final Cut Pro timeline (`.fcpxml`, also importable in Logic
+Pro): video above, one audio lane per device below. `correct` uses the corrected audio and
+mutes the cameras' own sound; `sync` places the original files only (drift stays in, each
+clip is centred so the error at its ends is halved):
+
+```sh
+uv run chronon sync -r desk/ch18.wav zoom.wav camera.mp4 -o ~/Desktop/timeline
+```
+
+With several `-r` tracks only those some file matched best are exported (`--all-refs` for all).
 
 `chronon synth` writes one WAV per clip plus a `truth.json` holding each device's true start times
 and clock drift. Presets: `basic`, `drift`, `multiclip`, `music`.

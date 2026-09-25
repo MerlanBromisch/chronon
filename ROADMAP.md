@@ -26,7 +26,8 @@ These apply to every stage and decide trade-offs.
 - [x] Separate camera audio and correct it like any other source (video never re-encoded)
 - [ ] BWF time stamp in unpadded files; join clips per device
 - [ ] Selectable time reference
-- [ ] FCPXML export (Final Cut Pro, Logic Pro)
+- [x] FCPXML export — `chronon sync` (originals) and `chronon correct` (corrected audio); DTD-valid
+- [ ] FCPXML verified in Final Cut Pro and Logic Pro with real material
 
 ## Stage 2 — Robustness
 - [ ] Devices: group files sharing a clock (auto + manual), one drift per device

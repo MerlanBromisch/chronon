@@ -1,7 +1,7 @@
 # Export concept
 
-Decided 2026-09-25. Status: corrected audio implemented (`chronon correct`), timeline
-export not yet.
+Decided 2026-09-25. Status: implemented — `chronon correct` (corrected audio + FCPXML)
+and `chronon sync` (FCPXML of the originals).
 
 ## Two outputs
 

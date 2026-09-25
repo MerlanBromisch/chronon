@@ -9,6 +9,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `uv run chronon synth OUTDIR --preset basic|drift|multiclip|music` — synthetic test media + `truth.json`
 - `uv run chronon eval OUTDIR` — run the aligner on a synth folder and print errors against truth
 - `uv run chronon analyze REF FILE...` — offset/drift of files against a reference
+- `uv run chronon sync [-r TRACK]... FILE... -o OUTDIR` — FCPXML of the originals (nothing corrected)
 - `uv run chronon correct [-r TRACK]... FILE... -o OUTDIR` — write drift/rate-corrected, padded audio + report, then verify
 - `uv run chronon analyze -r TRACK -r TRACK ... FILE...` — several sample-parallel reference tracks (one desk); each file uses its best match
 
@@ -16,6 +17,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `audio.py` — ffmpeg decoding to mono float32, resampling
 - `align.py` — offset + drift between two signals (coarse → fine windows every 10 s → RANSAC line → drift-compensated refine)
 - `correct.py` — corrected audio export (libsoxr at the real rate, libsndfile WAV/CAF, streamed) + verification + report
+- `fcpxml.py` — FCPXML 1.11 timeline (frame-aligned offsets, sample-accurate trims, asset start = timecode/BWF)
 - `synth.py` — synthetic scenarios with ground truth
 - `cli.py` — `chronon` command
 

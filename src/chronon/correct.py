@@ -27,7 +27,7 @@ import numpy as np
 import soundfile as sf
 import soxr
 
-from chronon import align, audio
+from chronon import align, audio, fcpxml
 
 CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fail at 2 GiB
 # The check is a second, independent measurement on a different window grid. On acoustic
@@ -60,6 +60,7 @@ class Output:
     pad_frames: int
     frames: int  # output frames including padding
     format: str
+    has_video: bool = False
     verify_offset_ms: float | None = None
     verify_drift_ppm: float | None = None
     verified: bool | None = None
@@ -79,6 +80,32 @@ class CorrectError(ValueError):
     pass
 
 
+Entry = tuple[Path, int, align.Alignment, bool]  # (file, reference index, alignment, is_ref)
+
+
+def analyse(
+    refs: Sequence[Path],
+    files: Sequence[Path],
+    all_refs: bool = False,
+    progress: Progress | None = None,
+) -> list[Entry]:
+    """Align the files; return entries for the reference tracks to export and the files.
+
+    Of several reference tracks only those some file matched best are exported (plus the
+    first), unless ``all_refs``; all of them are still used to find the best match."""
+    report = progress or (lambda what, done, total: None)
+    report("analysing", 0, len(files))
+    results = align.align_files(refs, files)
+    report("analysing", len(files), len(files))
+    used = {0} | {i for i, _ in results}
+    identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
+    entries: list[Entry] = [
+        (r, i, identity, True) for i, r in enumerate(refs) if all_refs or i in used
+    ]
+    entries += [(f, i, a, False) for f, (i, a) in zip(files, results, strict=True)]
+    return entries
+
+
 def run(
     refs: Sequence[Path | str],
     files: Sequence[Path | str],
@@ -88,39 +115,78 @@ def run(
     fmt: str = "auto",
     overwrite: bool = False,
     progress: Progress | None = None,
+    all_refs: bool = False,
+    name: str | None = None,
 ) -> list[Output]:
-    """Analyse, write and verify. Returns one Output per reference track and file."""
+    """Analyse, write, verify, write the timeline. Returns one Output per exported file."""
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
     _check_outdir(outdir, refs + files)
     report = progress or (lambda what, done, total: None)
-
-    report("analysing", 0, len(files))
-    results = align.align_files(refs, files)
-    report("analysing", len(files), len(files))
-
-    identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
-    entries = [(r, i, identity, True) for i, r in enumerate(refs)]
-    entries += [(f, i, a, False) for f, (i, a) in zip(files, results, strict=True)]
+    entries = analyse(refs, files, all_refs, report)
     outputs = plan(entries, refs, outdir, rate, pad, fmt, overwrite)
     _check_space(outdir, outputs)
 
     outdir.mkdir(parents=True, exist_ok=True)
     for k, out in enumerate(outputs):
-        report(f"writing {Path(out.path).name} ({k + 1}/{len(outputs)})", 0, out.frames)
-        write(
-            out,
-            lambda done, total, o=out, k=k: report(
-                f"writing {Path(o.path).name} ({k + 1}/{len(outputs)})", done, total
-            ),
-        )
+        label = f"writing {Path(out.path).name} ({k + 1}/{len(outputs)})"
+        report(label, 0, out.frames)
+        write(out, lambda done, total, label=label: report(label, done, total))
 
     verify(outputs, report)
+    items = []
+    for o in outputs:
+        if o.has_video:
+            items.append(fcpxml.Item(Path(o.source), o.position_s, o.drift_ppm, video_only=True))
+        items.append(fcpxml.Item(Path(o.path), o.start_s))
+    placed = fcpxml.write(items, outdir / f"{name or outdir.name}.fcpxml", name or outdir.name)
+    for p in placed:
+        if p.media.has_video:
+            out = next(o for o in outputs if o.source == str(p.item.path))
+            out.notes.append(f"video placed within ±{p.error_ms:.0f} ms")
     write_report(outputs, outdir)
     return outputs
 
 
+@dataclass
+class Placement:
+    source: str
+    position_s: float
+    drift_ppm: float
+    confidence: float
+    reliable: bool
+    error_ms: float  # worst misplacement over the clip from remaining drift / frame rounding
+
+
+def sync(
+    refs: Sequence[Path | str],
+    files: Sequence[Path | str],
+    outdir: Path | str,
+    progress: Progress | None = None,
+    all_refs: bool = False,
+    name: str | None = None,
+) -> list[Placement]:
+    """Analyse and write a timeline of the original files (nothing corrected)."""
+    refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
+    _check_outdir(outdir, refs + files)
+    entries = analyse(refs, files, all_refs, progress)
+    zero = min(0.0, *(a.offset_s for _, _, a, _ in entries))
+    items = [fcpxml.Item(f, a.offset_s - zero, a.drift_ppm) for f, _, a, _ in entries]
+    outdir.mkdir(parents=True, exist_ok=True)
+    placed = fcpxml.write(items, outdir / f"{name or outdir.name}.fcpxml", name or outdir.name)
+    result = [
+        Placement(
+            str(f), a.offset_s - zero, a.drift_ppm, a.confidence, is_ref or a.reliable, p.error_ms
+        )
+        for (f, _, a, is_ref), p in zip(entries, placed, strict=True)
+    ]
+    (outdir / "chronon-sync.json").write_text(
+        json.dumps([asdict(r) for r in result], indent=2) + "\n"
+    )
+    return result
+
+
 def plan(
-    entries: Sequence[tuple[Path, int, align.Alignment, bool]],
+    entries: Sequence[Entry],
     refs: Sequence[Path],
     outdir: Path,
     rate: int,
@@ -159,6 +225,7 @@ def plan(
             frames=frames,
             format="wav",
         )
+        out.has_video = info.has_video
         out.format = fmt if fmt != "auto" else ("caf" if out.bytes > CAF_ABOVE_BYTES else "wav")
         if fmt == "auto" and out.format == "caf":
             out.notes.append("written as CAF: over 2 GiB")

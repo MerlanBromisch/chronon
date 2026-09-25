@@ -26,29 +26,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=0)
 
     p = commands.add_parser("analyze", help="measure offset and drift of files against a reference")
-    p.add_argument(
-        "-r",
-        "--ref",
-        action="append",
-        default=[],
-        metavar="TRACK",
-        help="reference track; repeat for several sample-parallel tracks of one device "
-        "(e.g. all channels of a desk) and each file uses the one it matches best. "
-        "Default: the first file",
-    )
+    _ref_args(p, export=False)
     p.add_argument("files", nargs="+", help="recordings to align to the reference")
+
+    p = commands.add_parser(
+        "sync", help="write a Final Cut Pro timeline (FCPXML) of the original files"
+    )
+    _ref_args(p)
+    p.add_argument("files", nargs="+", help="recordings to place")
+    p.add_argument("-o", "--out", required=True, help="output folder for the .fcpxml")
+    p.add_argument("--name", help="project name (default: the output folder's name)")
 
     p = commands.add_parser(
         "correct", help="write drift- and rate-corrected audio on one timeline, then verify it"
     )
-    p.add_argument(
-        "-r",
-        "--ref",
-        action="append",
-        default=[],
-        metavar="TRACK",
-        help="reference track(s), as for analyze. Default: the first file",
-    )
+    _ref_args(p)
     p.add_argument("files", nargs="+", help="recordings to correct")
     p.add_argument(
         "-o", "--out", required=True, help="output folder (must not be a folder holding any input)"
@@ -67,6 +59,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="auto = WAV, or CAF for files over 2 GiB",
     )
     p.add_argument("--overwrite", action="store_true", help="replace existing output files")
+    p.add_argument("--name", help="project name (default: the output folder's name)")
 
     p = commands.add_parser("eval", help="run analyze on a 'chronon synth' folder and compare")
     p.add_argument("scene", help="folder written by 'chronon synth'")
@@ -77,6 +70,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _synth(args)
         if args.command == "analyze":
             return _analyze(args)
+        if args.command == "sync":
+            return _sync(args)
         if args.command == "correct":
             return _correct(args)
         if args.command == "eval":
@@ -84,6 +79,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (audio.AudioError, ValueError) as e:
         parser.exit(1, f"chronon: error: {e}\n")
     return 2
+
+
+def _ref_args(p: argparse.ArgumentParser, export: bool = True) -> None:
+    p.add_argument(
+        "-r",
+        "--ref",
+        action="append",
+        default=[],
+        metavar="TRACK",
+        help="reference track; repeat for several sample-parallel tracks of one device "
+        "(e.g. all channels of a desk) and each file uses the one it matches best. "
+        "Default: the first file",
+    )
+    if export:
+        p.add_argument(
+            "--all-refs",
+            action="store_true",
+            help="export every reference track, not only those a file matched best",
+        )
+
+
+def _refs_and_files(args: argparse.Namespace) -> tuple[list[str], list[str]]:
+    refs, files = (args.ref, args.files) if args.ref else (args.files[:1], args.files[1:])
+    if not files:
+        raise ValueError("give a reference and at least one more file")
+    return refs, files
 
 
 def _synth(args: argparse.Namespace) -> int:
@@ -103,9 +124,7 @@ def _synth(args: argparse.Namespace) -> int:
 
 
 def _analyze(args: argparse.Namespace) -> int:
-    refs, files = (args.ref, args.files) if args.ref else (args.files[:1], args.files[1:])
-    if not files:
-        raise ValueError("nothing to align: give a reference and at least one more file")
+    refs, files = _refs_and_files(args)
     results = align.align_files(refs, files)
     print(f"reference: {', '.join(Path(r).name for r in refs)}")
     print(f"{'file':<24} {'offset s':>13} {'drift ppm':>10} {'confidence':>10}  windows  notes")
@@ -119,11 +138,18 @@ def _analyze(args: argparse.Namespace) -> int:
 
 
 def _correct(args: argparse.Namespace) -> int:
-    refs, files = (args.ref, args.files) if args.ref else (args.files[:1], args.files[1:])
-    if not files:
-        raise ValueError("nothing to correct: give a reference and at least one more file")
+    refs, files = _refs_and_files(args)
     outputs = correct.run(
-        refs, files, args.out, args.rate, args.pad, args.format, args.overwrite, progress=_progress
+        refs,
+        files,
+        args.out,
+        args.rate,
+        args.pad,
+        args.format,
+        args.overwrite,
+        progress=_progress,
+        all_refs=args.all_refs,
+        name=args.name,
     )
     print(correct.format_report(outputs))
     print(f"report: {Path(args.out) / 'chronon-report.txt'}")
@@ -131,6 +157,20 @@ def _correct(args: argparse.Namespace) -> int:
     if failed:
         print(f"{len(failed)} file(s) failed verification", file=sys.stderr)
         return 1
+    return 0
+
+
+def _sync(args: argparse.Namespace) -> int:
+    refs, files = _refs_and_files(args)
+    result = correct.sync(refs, files, args.out, _progress, args.all_refs, args.name)
+    print(f"{'file':<28} {'timeline s':>12} {'drift ppm':>10} {'off at ends':>12}  notes")
+    for r in result:
+        note = "" if r.reliable else "NO RELIABLE MATCH"
+        print(
+            f"{Path(r.source).name:<28} {r.position_s:>12.6f} {r.drift_ppm:>+10.2f} "
+            f"{r.error_ms:>9.1f} ms  {note}"
+        )
+    print(f"timeline: {Path(args.out) / ((args.name or Path(args.out).name) + '.fcpxml')}")
     return 0
 
 
