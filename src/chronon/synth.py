@@ -207,6 +207,19 @@ def _reverb_ir(rt60_s: float, rate: int, rng: np.random.Generator) -> np.ndarray
     return np.concatenate([[1.0], tail / np.linalg.norm(tail)])
 
 
+def expected_alignment(
+    ref_start_s: float, ref_drift_ppm: float, start_s: float, drift_ppm: float
+) -> tuple[float, float]:
+    """True (offset_s, drift_ppm) of a clip relative to a reference clip.
+
+    Same model as :class:`chronon.align.Alignment`: the clip's file time ``t`` lies at
+    reference file time ``offset_s + t / (1 + drift_ppm * 1e-6)``.
+    """
+    offset = (start_s - ref_start_s) * (1 + ref_drift_ppm * 1e-6)
+    drift = ((1 + drift_ppm * 1e-6) / (1 + ref_drift_ppm * 1e-6) - 1) * 1e6
+    return offset, drift
+
+
 # --- files -----------------------------------------------------------------
 
 

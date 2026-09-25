@@ -3,9 +3,10 @@
 ## Stage 1 — Core (CLI / drop app)
 - [x] Project setup (uv, pytest, ruff, CI on Linux + macOS)
 - [x] Synthetic test scenarios with known offset / drift (`chronon synth`)
-- [ ] Decode audio from any audio/video file (ffmpeg)
-- [ ] Coarse offset search on downsampled audio, sample-accurate refinement
-- [ ] Drift measurement (windowed cross-correlation + linear fit) and correction
+- [x] Decode audio from any audio/video file (ffmpeg)
+- [x] Coarse offset search on downsampled audio, sample-accurate refinement
+- [x] Drift measurement (windowed cross-correlation + linear fit) — `chronon analyze`
+- [ ] Drift correction
 - [ ] Write corrected audio files aligned to a reference
 - [ ] FCPXML export (Final Cut Pro, Logic Pro)
 

@@ -2,7 +2,7 @@
 
 **Automatic waveform-based sync for multi-device recordings — with clock drift correction.**
 
-> Status: early development. No sync yet — only the test signal generator.
+> Status: early development. Offset and drift measurement works; no export yet.
 
 ## Why
 
@@ -26,13 +26,18 @@ See [ROADMAP.md](ROADMAP.md).
 
 ## Development
 
-Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/).
+Requires Python ≥ 3.11, [uv](https://docs.astral.sh/uv/) and ffmpeg (`brew install ffmpeg`).
 
 ```sh
 uv sync
 uv run pytest
-uv run chronon synth /tmp/scene --preset drift   # synthetic recordings with known offset and drift
+uv run chronon analyze recorder.wav camera.mov phone.mp4   # offset + drift against the first file
+uv run chronon synth /tmp/scene --preset drift            # synthetic recordings with known truth
+uv run chronon eval /tmp/scene                            # analyze a synth folder, compare with truth
 ```
+
+`chronon analyze` prints, for each file, where it starts in the reference (seconds), how much
+faster its clock runs (ppm) and a confidence between 0 and 1.
 
 `chronon synth` writes one WAV per clip plus a `truth.json` holding each device's true start times
 and clock drift. Presets: `basic`, `drift`, `multiclip`, `music`.
