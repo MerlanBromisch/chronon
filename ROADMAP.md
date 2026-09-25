@@ -20,8 +20,10 @@ These apply to every stage and decide trade-offs.
 - [x] Coarse offset search on downsampled audio, sample-accurate refinement
 - [x] Drift measurement (windowed cross-correlation + consensus line fit) — `chronon analyze`
 - [x] Pick the best of several sample-parallel reference tracks (`--ref` repeated)
-- [ ] Drift correction
-- [ ] Write corrected audio files aligned to a reference
+- [ ] Drift correction (concept: [docs/export.md](docs/export.md))
+- [ ] Write corrected audio files: drift + sample rate in one step, padded to timeline zero, verified
+- [ ] Separate camera audio and correct it like any other source (video never re-encoded)
+- [ ] Selectable time reference
 - [ ] FCPXML export (Final Cut Pro, Logic Pro)
 
 ## Stage 2 — Robustness
