@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+# test media
+*.wav
+*.WAV
+*.mov
+*.MOV
+*.mp4
+*.MP4
