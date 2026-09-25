@@ -1,6 +1,7 @@
 # Export concept
 
-Decided 2026-09-25. Status: concept, not implemented yet.
+Decided 2026-09-25. Status: corrected audio implemented (`chronon correct`), timeline
+export not yet.
 
 ## Two outputs
 
@@ -71,7 +72,8 @@ recorder model) and the user can correct the grouping.
 
 ## Open points
 
-- **CAF / RF64 in Logic and Final Cut** — test before relying on them.
+- **CAF in Final Cut** — test. (Logic: verified 2026-09-25 with the musical — padded WAV and
+  CAF outputs dropped at 0 line up, including the 4 h Zoom CAF.)
 - **BWF time stamp placement in Logic** for unpadded files — test.
 - **Video in Logic** — whether Logic's FCPXML import places the movie, or Chronon must state
   the movie start offset to enter by hand. Needs testing.
