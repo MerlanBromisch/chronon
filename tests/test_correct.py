@@ -79,6 +79,8 @@ def test_report_and_cli(tmp_path, capsys):
     assert main(["correct", str(rec), str(cam), "-o", str(out)]) == 0
     assert "cam_01.wav" in capsys.readouterr().out
     report = json.loads((out / "chronon-report.json").read_text())
+    assert report["schema"] == correct.REPORT_SCHEMA and report["kind"] == "correct"
+    report = report["files"]
     assert [Path(r["path"]).name for r in report] == ["rec_01.wav", "cam_01.wav"]
     assert report[1]["verified"] is True
     assert (out / "chronon-report.txt").exists()

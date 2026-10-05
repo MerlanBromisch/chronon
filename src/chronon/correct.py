@@ -30,7 +30,7 @@ import numpy as np
 import soundfile as sf
 import soxr
 
-from chronon import align, audio, fcpxml
+from chronon import __version__, align, audio, fcpxml
 
 WAV_MAX_BYTES = 2**32 - 2**20  # RIFF sizes are 32-bit; leave room for the header and chunks
 CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fail at 2 GiB
@@ -40,6 +40,10 @@ CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fai
 VERIFY_OFFSET_TOL_S = 5e-4
 VERIFY_DRIFT_TOL_PPM = 0.2
 FORMATS = ("auto", "wav", "caf")
+# Report files (chronon-report.json, chronon-sync.json): {"schema", "chronon", "kind", "files"}.
+# Bump the schema when a field changes meaning or goes away; adding fields does not need it.
+# Schema 0 = a bare list of file rows (before 2026-10-05), still readable.
+REPORT_SCHEMA = 1
 BLOCK_FRAMES = 1 << 16
 # BWF time stamps count from 01:00:00:00, where a Logic project starts by default: timeline
 # zero lands on the project start ("move region to recorded position")
@@ -226,9 +230,7 @@ def sync(
         )
         for (f, r), p in zip(entries, placed, strict=True)
     ]
-    (outdir / "chronon-sync.json").write_text(
-        json.dumps([asdict(r) for r in result], indent=2) + "\n"
-    )
+    _write_json(outdir / "chronon-sync.json", "sync", [asdict(r) for r in result])
     return result
 
 
@@ -237,10 +239,10 @@ def timeline(outdir: Path | str, name: str | None = None) -> Path:
     without analysing or writing audio again."""
     outdir = Path(outdir)
     if (outdir / "chronon-report.json").exists():
-        rows = json.loads((outdir / "chronon-report.json").read_text())
+        rows = read_report(outdir / "chronon-report.json")
         items = _corrected_items([_output_from_row(r) for r in rows])
     elif (outdir / "chronon-sync.json").exists():
-        rows = json.loads((outdir / "chronon-sync.json").read_text())
+        rows = read_report(outdir / "chronon-sync.json")
         items = [
             fcpxml.Item(
                 Path(r["source"]), r["position_s"], r["drift_ppm"], group=r.get("device", "")
@@ -251,6 +253,29 @@ def timeline(outdir: Path | str, name: str | None = None) -> Path:
         raise CorrectError(f"{outdir} holds no chronon-report.json or chronon-sync.json")
     _write_timeline(items, outdir, name)
     return outdir / f"{name or outdir.name}.fcpxml"
+
+
+def read_report(path: Path | str) -> list[dict]:
+    """The file rows of a chronon-report.json or chronon-sync.json, any schema so far."""
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, list):
+        return data
+    if data.get("schema", 0) > REPORT_SCHEMA:
+        raise CorrectError(f"{path} was written by a newer Chronon ({data.get('chronon')})")
+    return data["files"]
+
+
+def report_rows(outputs: Sequence[Output]) -> list[dict]:
+    """Report rows of corrected outputs, as written to chronon-report.json."""
+    return [
+        {k: v for k, v in asdict(o).items() if k != "check_at_s"} | {"start_s": o.start_s}
+        for o in outputs
+    ]
+
+
+def _write_json(path: Path, kind: str, rows: list[dict]) -> None:
+    data = {"schema": REPORT_SCHEMA, "chronon": __version__, "kind": kind, "files": rows}
+    path.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def _output_from_row(row: dict) -> Output:
@@ -546,11 +571,7 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
 
 
 def write_report(outputs: Sequence[Output], outdir: Path) -> None:
-    data = [
-        {k: v for k, v in asdict(o).items() if k != "check_at_s"} | {"start_s": o.start_s}
-        for o in outputs
-    ]
-    (outdir / "chronon-report.json").write_text(json.dumps(data, indent=2) + "\n")
+    _write_json(outdir / "chronon-report.json", "correct", report_rows(outputs))
     (outdir / "chronon-report.txt").write_text(format_report(outputs) + "\n")
 
 
