@@ -168,6 +168,10 @@ def run(
             out = next(o for o in outputs if str(p.item.path) in {g.source for g in o.segments})
             label = f"{p.item.path.name}: " if len(out.segments) > 1 else ""
             out.notes.append(f"{label}video placed within ±{p.error_ms:.0f} ms")
+            if p.media.variable_rate:
+                out.notes.append(
+                    f"{label}variable frame rate: check picture against sound at the clip's end"
+                )
     write_report(outputs, outdir)
     return outputs
 
@@ -213,7 +217,12 @@ def sync(
             r.is_reference or r.alignment.reliable,
             p.error_ms,
             r.device,
-            result_notes(r),
+            result_notes(r)
+            + (
+                ["variable frame rate: check picture against sound at the end"]
+                if p.media.variable_rate
+                else []
+            ),
         )
         for (f, r), p in zip(entries, placed, strict=True)
     ]

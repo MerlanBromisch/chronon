@@ -45,7 +45,8 @@ These apply to every stage and decide trade-offs.
 - [ ] Non-linear clock drift: detected (`wander_ms`), not yet corrected (piecewise fit)
 - [x] Stream long files instead of holding them in memory (see Goals)
 - [ ] Video drift via retiming in the export (no video re-encode)
-- [ ] Variable frame rate (phone) footage
+- [x] Variable frame rate video: real length (not frame count × frame duration), flagged in reports
+- [ ] Variable frame rate: verify with real iPhone footage (Auto-FPS, low light) in Final Cut
 - [ ] Premiere Pro XML and DaVinci Resolve export
 
 ## Stage 3 — Mac app
