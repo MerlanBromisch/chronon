@@ -13,3 +13,8 @@ build/
 *.MOV
 *.mp4
 *.MP4
+packaging/bin/
+packaging/tmp/
+build/
+dist/
+*.spec
