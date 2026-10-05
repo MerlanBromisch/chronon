@@ -249,6 +249,7 @@ class References:
         self.paths = list(paths) if paths is not None else None
         self._coarse: dict[int, np.ndarray] = {}
         self.preferred = 0
+        self.status: Callable[[str], None] = lambda text: None  # what is being read now
 
     @classmethod
     def from_arrays(cls, refs: Sequence[np.ndarray], rate: int) -> References:
@@ -277,6 +278,7 @@ class References:
                 self._coarse[i] = audio.resample(src.x, src.rate, COARSE_RATE)
             else:
                 assert self.paths is not None
+                self.status(f"reading reference track {i + 1} of {len(self)}")
                 hint = int(src.length * COARSE_RATE / src.rate) + 1
                 self._coarse[i] = _collect(audio.stream_mono(self.paths[i], COARSE_RATE), hint)
         return self._coarse[i]
@@ -310,10 +312,15 @@ def align_files(
     total, done = round(sum(durations)), 0.0
     refs = References.from_files(ref_paths, rate)
     results = []
+    current = {"name": "", "done": 0.0}
+    refs.status = lambda text: report(
+        f"analysing {current['name']} ({text})", round(current["done"]), total
+    )
     # the next file is decoded in the background while this one is analysed
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="chronon-load") as loader:
         upcoming = loader.submit(Recording.from_file, paths[0], rate) if paths else None
         for k, (path, duration) in enumerate(zip(paths, durations, strict=True)):
+            current.update(name=Path(path).name, done=done)
             report(f"analysing {Path(path).name}", round(done), total)
             assert upcoming is not None
             rec = upcoming.result()
@@ -322,8 +329,17 @@ def align_files(
                 if k + 1 < len(paths)
                 else None
             )
+
+            def stage(
+                frac: float,
+                base: float = done,
+                length: float = duration,
+                name: str = Path(path).name,
+            ) -> None:
+                report(f"analysing {name}", round(base + frac * length), total)
+
             try:
-                results.append(_align(refs, rec))
+                results.append(_align(refs, rec, stage))
             except ValueError as e:
                 raise ValueError(f"{Path(path).name}: {e}") from None
             del rec
@@ -374,20 +390,29 @@ class _Anchor:
     tried: int  # coarse windows with signal
 
 
-def _align(refs: References, rec: Recording) -> tuple[int, Alignment]:
+def _align(
+    refs: References, rec: Recording, stage: Callable[[float], None] | None = None
+) -> tuple[int, Alignment]:
+    """``stage`` hears the share of this file's work that is done (0..1)."""
+    stage = stage or (lambda frac: None)
     anchor = _anchor(refs, rec)
+    stage(0.15)
     narrow = anchor.slope is not None
-    result = _align_with(refs, rec, anchor, narrow)
+    result = _align_with(refs, rec, anchor, narrow, stage)
     if narrow and not result[1].reliable:
         # the coarse slope may have been misleading: search the full drift range
-        wide = _align_with(refs, rec, anchor, narrow=False)
+        wide = _align_with(refs, rec, anchor, False, stage)
         if _rank(wide[1]) > _rank(result[1]):
             result = wide
     return result
 
 
 def _align_with(
-    refs: References, rec: Recording, anchor: _Anchor, narrow: bool
+    refs: References,
+    rec: Recording,
+    anchor: _Anchor,
+    narrow: bool,
+    stage: Callable[[float], None],
 ) -> tuple[int, Alignment]:
     t0, lag0 = anchor.t0, anchor.lag0
     if narrow:
@@ -430,8 +455,10 @@ def _align_with(
             )
         ranked = sorted(finalists, key=lambda i: _screen_score(found[i]), reverse=True)
         candidates = ranked[:SCREEN_KEEP]
+    stage(0.4)
     best: tuple[int, Alignment] | None = None
-    for i in candidates:
+    for k, i in enumerate(candidates):
+        stage(0.4 + 0.6 * k / len(candidates))
         try:
             a = _measure(refs.sources[i], rec, rec.positions, lag_at, margin_at)
         except ValueError:

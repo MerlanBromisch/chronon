@@ -6,6 +6,7 @@ import argparse
 import dataclasses
 import json
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -134,7 +135,9 @@ def _synth(args: argparse.Namespace) -> int:
 
 def _analyze(args: argparse.Namespace) -> int:
     refs, files = _refs_and_files(args)
-    results = align.align_files(refs, files)
+    progress = _Progress(["analysing"])
+    results = align.align_files(refs, files, progress=progress)
+    progress.finish()
     print(f"reference: {', '.join(Path(r).name for r in refs)}")
     print(f"{'file':<24} {'offset s':>13} {'drift ppm':>10} {'confidence':>10}  windows  notes")
     for path, (ref_index, a) in zip(files, results, strict=True):
@@ -148,6 +151,7 @@ def _analyze(args: argparse.Namespace) -> int:
 
 def _correct(args: argparse.Namespace) -> int:
     refs, files = _refs_and_files(args)
+    progress = _Progress(["analysing", "writing", "verifying"])
     outputs = correct.run(
         refs,
         files,
@@ -156,10 +160,11 @@ def _correct(args: argparse.Namespace) -> int:
         args.pad,
         args.format,
         args.overwrite,
-        progress=_progress,
+        progress=progress,
         all_refs=args.all_refs,
         name=args.name,
     )
+    progress.finish()
     print(correct.format_report(outputs))
     print(f"report: {Path(args.out) / 'chronon-report.txt'}")
     failed = [o for o in outputs if o.verified is False]
@@ -171,7 +176,9 @@ def _correct(args: argparse.Namespace) -> int:
 
 def _sync(args: argparse.Namespace) -> int:
     refs, files = _refs_and_files(args)
-    result = correct.sync(refs, files, args.out, _progress, args.all_refs, args.name)
+    progress = _Progress(["analysing"])
+    result = correct.sync(refs, files, args.out, progress, args.all_refs, args.name)
+    progress.finish()
     print(f"{'file':<28} {'timeline s':>12} {'drift ppm':>10} {'off at ends':>12}  notes")
     for r in result:
         note = "" if r.reliable else "NO RELIABLE MATCH"
@@ -183,12 +190,47 @@ def _sync(args: argparse.Namespace) -> int:
     return 0
 
 
-def _progress(what: str, done: int, total: int) -> None:
-    if not sys.stderr.isatty():
-        return
-    pct = 100 * done / total if total else 100
-    end = "\n" if done >= total else ""
-    print(f"\r{what}: {pct:5.1f} %", end=end, file=sys.stderr, flush=True)
+class _Progress:
+    """One status line on a terminal: step, percentage and time left in this step.
+
+    The time left is extrapolated from the rate of real work done so far (seconds of
+    audio analysed, samples written, files checked), not from a guess."""
+
+    def __init__(self, steps: Sequence[str]):
+        self.steps = list(steps)
+        self.step = ""
+        self.started = 0.0
+        self.tty = sys.stderr.isatty()
+
+    def __call__(self, what: str, done: int, total: int) -> None:
+        if not self.tty:
+            return
+        step = what.split(" ")[0]
+        now = time.monotonic()
+        if step != self.step:
+            if self.step:
+                print(file=sys.stderr)
+            self.step, self.started = step, now
+        elapsed = now - self.started
+        frac = done / total if total else 1.0
+        left = ""
+        if 0 < frac < 1 and elapsed > 1.5:
+            left = f"  about {_duration(elapsed * (1 - frac) / frac)} left"
+        number = self.steps.index(step) + 1 if step in self.steps else 0
+        prefix = f"[{number}/{len(self.steps)}] " if number else ""
+        line = f"{prefix}{what}: {100 * frac:3.0f} %{left}"
+        print(f"\r{line:<78}", end="", file=sys.stderr, flush=True)
+
+    def finish(self) -> None:
+        if self.tty and self.step:
+            print(file=sys.stderr)
+
+
+def _duration(seconds: float) -> str:
+    seconds = round(seconds)
+    if seconds < 60:
+        return f"{max(seconds, 1)} s"
+    return f"{seconds // 60} min {seconds % 60:02d} s"
 
 
 def _notes(a: align.Alignment, via: str | None) -> list[str]:
