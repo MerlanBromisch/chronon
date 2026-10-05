@@ -48,7 +48,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - Files for the user to open go to `~/Documents/Chronon Test/`, never to `/private/tmp`.
 - Never commit media files (see `.gitignore`); generate them with `chronon synth`.
 - Never modify the user's original media; outputs go to a separate folder (enforced in `correct`).
-- Export design decisions: `docs/export.md`.
+- Export design decisions: `docs/export.md`. Desktop app decisions: `docs/app.md`.
 - Devices: parallel tracks share one measurement (screened as (reference track, track) pairs; an electrical copy
   of a desk channel beats any acoustic match); clips keep their own drift (clocks change rate over hours),
   only clips too short/weak borrow a sibling's. Clips without a reliable match to the reference are linked
