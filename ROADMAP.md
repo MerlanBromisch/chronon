@@ -29,7 +29,7 @@ These apply to every stage and decide trade-offs.
 - [x] FCPXML export — `chronon sync` (originals) and `chronon correct` (corrected audio); DTD-valid
 - [x] FCPXML imports in Final Cut Pro without warnings, picture and sound in sync (musical: 2 cameras,
   Zoom, 2 desks; confirmed 2026-10-05)
-- [ ] FCPXML in Logic Pro (video as picture reference)
+- [x] FCPXML in Logic Pro: audio tracks and video as picture reference (confirmed 2026-10-05)
 
 ## Stage 2 — Robustness
 - [ ] Devices: group files sharing a clock (auto + manual), one drift per device
