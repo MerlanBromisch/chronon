@@ -28,7 +28,7 @@ These apply to every stage and decide trade-offs.
 - [x] Separate camera audio and correct it like any other source (video never re-encoded)
 - [x] BWF time stamp in every WAV / RF64 output (timeline zero = 01:00:00:00); join clips per device (`--join`)
 - [x] Selectable time reference (`-r`)
-- [ ] RF64 (unpadded files over 2 GiB) in Logic Pro and Final Cut Pro — to verify
+
 - [x] FCPXML export — `chronon sync` (originals) and `chronon correct` (corrected audio); DTD-valid
 - [x] FCPXML imports in Final Cut Pro without warnings, picture and sound in sync (musical: 2 cameras,
   Zoom, 2 desks; confirmed 2026-10-05)

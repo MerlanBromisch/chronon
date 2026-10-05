@@ -32,18 +32,19 @@ import soxr
 
 from chronon import align, audio, fcpxml
 
+WAV_MAX_BYTES = 2**32 - 2**20  # RIFF sizes are 32-bit; leave room for the header and chunks
 CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fail at 2 GiB
 # The check is a second, independent measurement on a different window grid. On acoustic
 # pairs (a room recorder far from the stage) that alone moves the offset by up to ~0.35 ms,
 # so a tighter bound would fail correct files. Correction bugs show up as drift.
 VERIFY_OFFSET_TOL_S = 5e-4
 VERIFY_DRIFT_TOL_PPM = 0.2
-FORMATS = ("auto", "wav", "caf", "rf64")
+FORMATS = ("auto", "wav", "caf")
 BLOCK_FRAMES = 1 << 16
 # BWF time stamps count from 01:00:00:00, where a Logic project starts by default: timeline
 # zero lands on the project start ("move region to recorded position")
 BWF_ORIGIN_S = 3600.0
-BWF_FORMATS = ("wav", "rf64")
+BWF_FORMATS = ("wav",)
 WRITE_THREADS = min(4, os.cpu_count() or 1)
 
 Progress = Callable[[str, int, int], None]  # (what, done, total) in real work units
@@ -383,20 +384,24 @@ def _plan_output(
         out.format = fmt
     elif out.bytes <= CAF_ABOVE_BYTES:
         out.format = "wav"
+    elif not pad and out.bytes <= WAV_MAX_BYTES:
+        # an unpadded file needs its BWF time stamp, which CAF cannot hold; WAV reaches 4 GiB.
+        # (libsndfile's RF64 left the data size at 0xFFFFFFFF, so the chunk Logic appends to
+        # a file was read as audio by other programs: not used.)
+        out.format = "wav"
+        out.notes.append("WAV over 2 GiB: a few programs may not read it")
     else:
-        # over 2 GiB: CAF, or RF64 (WAV without the size limit) where the BWF time stamp is
-        # needed to place an unpadded file
-        out.format = "caf" if pad else "rf64"
-        out.notes.append(f"written as {out.format.upper()}: over 2 GiB")
+        out.format = "caf"
+        out.notes.append("written as CAF: over 2 GiB")
     if out.format not in BWF_FORMATS and not pad:
         out.notes.append("no time stamp in CAF: place it from the timeline file")
-    if fmt == "wav" and out.bytes >= 2**32:
+    if fmt == "wav" and out.bytes > WAV_MAX_BYTES:
         raise CorrectError(f"{src.name}: {out.bytes / 2**30:.1f} GiB is too large for WAV")
     if not is_ref and not all(res.alignment.reliable for _, res in group):
         out.notes.append("NO RELIABLE MATCH: position and drift may be wrong")
     if out.has_video:
         out.notes.append("audio of a video file; the video itself is not changed")
-    path = outdir / f"{name}.{'wav' if out.format == 'rf64' else out.format}"
+    path = outdir / f"{name}.{out.format}"
     if path.exists() and not overwrite:
         raise CorrectError(f"{path} exists (use --overwrite)")
     out.path = str(path)

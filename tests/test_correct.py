@@ -152,11 +152,31 @@ def test_clips_of_a_device_can_be_joined(tmp_path):
     assert timeline.count("<asset-clip") == 2  # reference + one joined camera file
 
 
-def test_large_unpadded_files_become_rf64_with_time_stamp(tmp_path, monkeypatch):
+def test_large_unpadded_files_stay_wav_with_time_stamp(tmp_path, monkeypatch):
     monkeypatch.setattr(correct, "CAF_ABOVE_BYTES", 1_000_000)
     rec, cam, _ = _scene(tmp_path)
     _, cam_out = correct.run([rec], [cam], tmp_path / "out", pad=False)
-    assert cam_out.format == "rf64" and cam_out.path.endswith(".wav")
-    assert sf.info(cam_out.path).format == "RF64"
+    assert cam_out.format == "wav" and sf.info(cam_out.path).format == "WAV"
     assert _bwf(cam_out.path) == pytest.approx((3600 + START) * 48_000, abs=5)
     assert cam_out.verified
+    monkeypatch.setattr(correct, "WAV_MAX_BYTES", 1_000_000)  # beyond what WAV can hold
+    _, cam_out = correct.run([rec], [cam], tmp_path / "caf", pad=False)
+    assert cam_out.format == "caf" and any("no time stamp" in n for n in cam_out.notes)
+
+
+def _data_size_is_exact(path) -> bool:
+    import struct
+
+    with open(path, "rb") as f:
+        f.read(12)
+        while True:
+            cid, size = struct.unpack("<4sI", f.read(8))
+            if cid == b"data":
+                return size != 0xFFFFFFFF and f.tell() + size <= Path(path).stat().st_size
+            f.seek(size + (size & 1), 1)
+
+
+def test_wav_outputs_state_their_data_size(tmp_path):
+    rec, cam, _ = _scene(tmp_path)
+    for o in correct.run([rec], [cam], tmp_path / "out", pad=False):
+        assert _data_size_is_exact(o.path)

@@ -32,9 +32,11 @@ output folder.
 - **One output file per clip** by default. With `--join` the clips of a device become one file,
   gaps filled with silence; each clip keeps its own drift correction. Parallel tracks are not
   joined (each channel stays a file).
-- **Format:** WAV by default. A file that would exceed 2 GiB is written as CAF if padded and as
-  RF64 if not (CAF cannot carry the BWF time stamp an unpadded file needs; RF64 is WAV without
-  the size limit). The format can also be fixed by the user.
+- **Format:** WAV by default. A padded file over 2 GiB is written as CAF. An unpadded file
+  stays WAV up to 4 GiB, because it needs its BWF time stamp and CAF cannot hold one; beyond
+  4 GiB it becomes CAF and is placed from the timeline file. Not RF64: libsndfile left its data
+  size at 0xFFFFFFFF, and once Logic appended its waveform chunk (`LGWV`, it does that to every
+  imported file) other programs read that chunk as 15–26 s of audio.
 - **BWF time stamp** in every WAV / RF64 output: its timeline position counted from
   01:00:00:00 (Logic's default project start), so "move region to recorded position" works
   and Final Cut reads it as the media start.
