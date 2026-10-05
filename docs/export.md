@@ -29,12 +29,17 @@ output folder.
   padded too when something started before it.
 - Bit depth and channel layout as in the source; target rate is a setting (default 48 kHz).
 - The reference is also written, so every output file shares the same zero.
-- **One output file per clip** by default. Optionally the clips of a device are joined into
-  one file per device, gaps filled with silence.
-- **Format:** WAV by default. A file that would exceed 2 GiB is written as CAF instead (WAV
-  and AIFF are limited to 4 GiB, some programs already fail at 2 GiB) and the report says
-  so. The format can also be fixed by the user. CAF / RF64 support in Logic and Final Cut
-  must be verified.
+- **One output file per clip** by default. With `--join` the clips of a device become one file,
+  gaps filled with silence; each clip keeps its own drift correction. Parallel tracks are not
+  joined (each channel stays a file).
+- **Format:** WAV by default. A padded file over 2 GiB is written as CAF. An unpadded file
+  stays WAV up to 4 GiB, because it needs its BWF time stamp and CAF cannot hold one; beyond
+  4 GiB it becomes CAF and is placed from the timeline file. Not RF64: libsndfile left its data
+  size at 0xFFFFFFFF, and once Logic appended its waveform chunk (`LGWV`, it does that to every
+  imported file) other programs read that chunk as 15–26 s of audio.
+- **BWF time stamp** in every WAV / RF64 output: its timeline position counted from
+  01:00:00:00 (Logic's default project start), so "move region to recorded position" works
+  and Final Cut reads it as the media start.
 
 ## Devices
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import shutil
+import struct
 import subprocess
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from math import gcd
@@ -270,6 +272,43 @@ class FileSource(Source):
         f = getattr(self._local, "file", None)
         if f is not None:
             f.close()
+
+
+_BWF_FORMAT = "<256s32s32s10s8s2xIIh64s5h180sI256s"  # libsndfile SF_BROADCAST_INFO (864 bytes)
+_SFC_SET_BROADCAST_INFO = 0x10F1
+
+
+def set_bwf(f: sf.SoundFile, time_reference: int, rate: int, originator: str = "Chronon") -> None:
+    """Give a WAV / RF64 file being written a BWF ``bext`` chunk with ``time_reference``
+    (samples since midnight). Must be called before any audio is written."""
+    now = time.localtime()
+    history = f"A=PCM,F={rate},T={originator}\r\n".encode()
+    info = struct.pack(
+        _BWF_FORMAT,
+        b"",
+        originator.encode()[:32],
+        b"",
+        time.strftime("%Y-%m-%d", now).encode(),
+        time.strftime("%H:%M:%S", now).encode(),
+        time_reference & 0xFFFFFFFF,
+        time_reference >> 32,
+        1,
+        b"",
+        0,
+        0,
+        0,
+        0,
+        0,
+        b"",
+        len(history),
+        history,
+    )
+    ffi = sf._ffi
+    if (
+        sf._snd.sf_command(f._file, _SFC_SET_BROADCAST_INFO, ffi.new("char[]", info), len(info))
+        != 1
+    ):
+        raise AudioError(f"cannot write a BWF time stamp into {f.name}")
 
 
 def open_source(path: Path | str, rate: int) -> Source:

@@ -61,6 +61,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p.add_argument("--overwrite", action="store_true", help="replace existing output files")
     p.add_argument("--name", help="project name (default: the output folder's name)")
+    p.add_argument(
+        "--join",
+        action="store_true",
+        help="one file per device: its clips joined, gaps filled with silence",
+    )
 
     p = commands.add_parser(
         "timeline", help="rebuild the .fcpxml of an earlier sync/correct run from its report"
@@ -174,6 +179,7 @@ def _correct(args: argparse.Namespace) -> int:
         all_refs=args.all_refs,
         name=args.name,
         separate=args.separate,
+        join=args.join,
     )
     progress.finish()
     print(correct.format_report(outputs))

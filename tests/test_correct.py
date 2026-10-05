@@ -105,3 +105,78 @@ def test_large_files_become_caf(tmp_path, monkeypatch):
     assert all(o.path.endswith(".caf") for o in outputs)
     assert sf.info(outputs[1].path).samplerate == 48_000
     assert outputs[1].verified
+
+
+def _bwf(path) -> int | None:
+    from chronon import audio
+
+    return audio.probe(path).time_reference
+
+
+def test_outputs_carry_a_bwf_time_stamp(tmp_path):
+    rec, cam, _ = _scene(tmp_path)
+    ref_out, cam_out = correct.run([rec], [cam], tmp_path / "padded")
+    assert _bwf(ref_out.path) == _bwf(cam_out.path) == 3600 * 48_000  # all start at zero
+    _, cam_out = correct.run([rec], [cam], tmp_path / "unpadded", pad=False)
+    assert _bwf(cam_out.path) == pytest.approx((3600 + START) * 48_000, abs=5)
+
+
+def test_clips_of_a_device_can_be_joined(tmp_path):
+    scenario = Scenario(
+        signal="noise",
+        seed=22,
+        devices=(
+            Device("rec", (Clip(0.0, 40.0),)),
+            # different lengths: equally long files without time stamps count as parallel tracks
+            Device("cam", (Clip(3.5, 12.0), Clip(22.0, 13.0)), sample_rate=44_100, drift_ppm=DRIFT),
+        ),
+    )
+    media = tmp_path / "media"
+    synth.write(scenario, media)
+    seed = np.random.SeedSequence(scenario.seed).spawn(3)[0]
+    source = synth.make_source("noise", scenario.duration_s, 48_000, np.random.default_rng(seed))
+    clips = [media / "cam_01.wav", media / "cam_02.wav"]
+    outputs = correct.run([media / "rec_01.wav"], clips, tmp_path / "out", join=True, name="t")
+    assert [Path(o.path).name for o in outputs] == ["rec_01.wav", "cam.wav"]
+    joined = outputs[1]
+    assert joined.verified
+    assert [s.source for s in joined.segments] == [str(c) for c in clips]
+    audio, _ = sf.read(joined.path, dtype="float64")
+    for start, length in ((3.5, 12.0), (22.0, 13.0)):
+        a, b = round(start * 48_000) + 4800, round((start + length) * 48_000) - 4800
+        got, want = _lowpass(audio[a:b]), _lowpass(source[a:b])
+        assert np.corrcoef(got[4800:-4800], want[4800:-4800])[0, 1] > 0.999
+    gap = audio[round(15.6 * 48_000) : round(21.9 * 48_000)]
+    assert not gap.any()
+    timeline = (tmp_path / "out" / "t.fcpxml").read_text()
+    assert timeline.count("<asset-clip") == 2  # reference + one joined camera file
+
+
+def test_large_unpadded_files_stay_wav_with_time_stamp(tmp_path, monkeypatch):
+    monkeypatch.setattr(correct, "CAF_ABOVE_BYTES", 1_000_000)
+    rec, cam, _ = _scene(tmp_path)
+    _, cam_out = correct.run([rec], [cam], tmp_path / "out", pad=False)
+    assert cam_out.format == "wav" and sf.info(cam_out.path).format == "WAV"
+    assert _bwf(cam_out.path) == pytest.approx((3600 + START) * 48_000, abs=5)
+    assert cam_out.verified
+    monkeypatch.setattr(correct, "WAV_MAX_BYTES", 1_000_000)  # beyond what WAV can hold
+    _, cam_out = correct.run([rec], [cam], tmp_path / "caf", pad=False)
+    assert cam_out.format == "caf" and any("no time stamp" in n for n in cam_out.notes)
+
+
+def _data_size_is_exact(path) -> bool:
+    import struct
+
+    with open(path, "rb") as f:
+        f.read(12)
+        while True:
+            cid, size = struct.unpack("<4sI", f.read(8))
+            if cid == b"data":
+                return size != 0xFFFFFFFF and f.tell() + size <= Path(path).stat().st_size
+            f.seek(size + (size & 1), 1)
+
+
+def test_wav_outputs_state_their_data_size(tmp_path):
+    rec, cam, _ = _scene(tmp_path)
+    for o in correct.run([rec], [cam], tmp_path / "out", pad=False):
+        assert _data_size_is_exact(o.path)
