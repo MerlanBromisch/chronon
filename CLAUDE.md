@@ -15,8 +15,9 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `uv run chronon analyze -r TRACK -r TRACK ... FILE...` — several sample-parallel reference tracks (one desk); each file uses its best match
 
 ## Layout
-- `audio.py` — ffmpeg decoding to mono float32, resampling
-- `align.py` — offset + drift between two signals (coarse → fine windows every 10 s → RANSAC line → drift-compensated refine)
+- `audio.py` — ffmpeg decoding, `Source`s for excerpt access (PCM via libsndfile seek, libsoxr resampling)
+- `align.py` — offset + drift: coarse (one desk track at 2 kHz) → screen desk tracks → fine windows every 10 s → RANSAC line → drift-compensated refine. Never holds whole recordings at 16 kHz.
+- `scripts/bench.py` — benchmark on the musical (time per phase, peak memory); results in `scripts/bench-results.jsonl`
 - `correct.py` — corrected audio export (libsoxr at the real rate, libsndfile WAV/CAF, streamed) + verification + report
 - `fcpxml.py` — FCPXML 1.11 timeline (frame-aligned offsets, sample-accurate trims, asset start = timecode/BWF)
 - `synth.py` — synthetic scenarios with ground truth

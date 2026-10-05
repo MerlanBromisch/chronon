@@ -34,7 +34,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from scipy import signal as sps
+import soundfile as sf
+import soxr
+from scipy import fft as sp_fft
 
 from chronon import audio
 
@@ -50,6 +52,19 @@ MIN_FINE_WINDOWS = 64  # short files: overlapping windows, up to half a window a
 MAX_FINE_WINDOWS = 3000
 COARSE_TOLERANCE_S = 0.05
 REFINE_MARGIN_S = 0.005
+SCREEN_WINDOWS = 48  # per reference track when choosing among several ...
+SCREEN_FINALISTS = 4  # ... then this many tracks get SCREEN_WINDOWS_2 more windows ...
+SCREEN_CLEAR = 12  # ... (all tracks, if no track reached this many agreeing windows) ...
+SCREEN_WINDOWS_2 = 96
+CHECK_WINDOWS = 96  # for check(): measuring an already corrected file
+FFT_WORKERS = -1  # all cores
+COARSE_CHUNK = 1 << 20  # coarse search in chunks: bounded memory on long references
+SCREEN_KEEP = 2  # ... and this many are measured in full
+# When the coarse windows already show the drift, fine windows search only this far from it
+# (coarse lags scatter by tens of ms between acoustic paths, hence the generous bound).
+NARROW_TOLERANCE_S = 0.08
+NARROW_DRIFT_PPM = 50.0
+NARROW_MIN_SPAN_S = 600.0  # coarse windows at least this far apart to trust their slope
 
 FIT_TOLERANCE_S = 1e-3
 RANSAC_TRIALS = 2000
@@ -86,25 +101,342 @@ class _Match:
     ncc: float  # signed normalised correlation at the peak
 
 
+class Recording:
+    """The file being aligned, as the analysis needs it: its fine windows and a low-rate
+    copy for the coarse search. The whole recording is never held at the analysis rate.
+
+    PCM files (WAV, AIFF, CAF) are read window by window where needed (``source``); other
+    files (video, compressed audio), where seeking is slow, are decoded once as a stream and
+    their windows (about 40 % of the audio) are kept in memory (``segs``)."""
+
+    def __init__(self, rate: int, length: int, positions: np.ndarray, win: int):
+        self.rate = rate
+        self.length = length
+        self.win = win
+        self.positions = positions
+        self.span = win + win // 1000 + 4  # room for resampling by up to MAX_DRIFT_PPM
+        self.segs: dict[int, np.ndarray] = {}
+        self.source: audio.Source | None = None
+        self.coarse = np.zeros(0, dtype=np.float32)
+        self.mean_power = 0.0
+
+    def window(self, p: int) -> tuple[np.ndarray, float]:
+        """The ``span`` samples of the window at position ``p`` and the exact analysis
+        position of its first sample (fractional for excerpts of e.g. 44.1 kHz files)."""
+        if self.source is None:
+            return self.segs[int(p)], float(p)
+        return self.source.read(int(p), self.span)
+
+    @classmethod
+    def from_blocks(cls, blocks, length_hint: int, rate: int) -> Recording:
+        win = _window_length(length_hint, rate)
+        rec = cls(rate, length_hint, _positions(length_hint, win, rate), win)
+        bufs = {int(p): np.zeros(rec.span, dtype=np.float32) for p in rec.positions}
+        starts = np.array(sorted(bufs))
+        lowrate = soxr.ResampleStream(
+            rate, COARSE_RATE, 1, dtype="float32", quality=audio.RESAMPLE_QUALITY
+        )
+        coarse = _Growing(int(length_hint * COARSE_RATE / rate) + 1)
+        energy, pos = 0.0, 0
+        for block in blocks:
+            block = np.asarray(block, dtype=np.float32)
+            end = pos + len(block)
+            first = np.searchsorted(starts, pos - rec.span, side="right")
+            last = np.searchsorted(starts, end, side="left")
+            for p in starts[first:last]:
+                a, b = max(p, pos), min(p + rec.span, end)
+                if b > a:
+                    bufs[int(p)][a - p : b - p] = block[a - pos : b - pos]
+            coarse.add(lowrate.resample_chunk(block))
+            energy += float(np.dot(block, block))
+            pos = end
+        coarse.add(lowrate.resample_chunk(np.zeros(0, np.float32), last=True))
+        rec.length = pos
+        rec.positions = np.array([p for p in rec.positions if p + rec.span <= pos] or [0])
+        rec.segs = {int(p): bufs[int(p)] for p in rec.positions if int(p) in bufs}
+        rec.coarse = coarse.array()
+        rec.mean_power = energy / max(pos, 1)
+        return rec
+
+    @classmethod
+    def from_array(cls, x: np.ndarray, rate: int) -> Recording:
+        x = np.asarray(x, dtype=np.float32)
+        return cls.from_blocks([x], len(x), rate)
+
+    @classmethod
+    def from_file(cls, path: Path | str, rate: int) -> Recording:
+        try:
+            source = audio.FileSource(path, rate)
+        except (RuntimeError, sf.LibsndfileError):
+            info = audio.probe(path)  # not PCM: stream once, keep the windows
+            hint = int(info.frames * rate / info.sample_rate)
+            return cls.from_blocks(audio.stream_mono(path, rate), hint, rate)
+        win = _window_length(source.length, rate)
+        rec = cls._lazy(source, _positions(source.length, win, rate), win)
+        hint = int(source.length * COARSE_RATE / rate) + 1
+        rec.coarse = _collect(audio.stream_mono(path, COARSE_RATE), hint)
+        return rec
+
+    @classmethod
+    def sampled(cls, source: audio.Source, count: int) -> Recording:
+        """Only ``count`` windows, read from ``source`` as needed; no coarse copy."""
+        win = _window_length(source.length, source.rate)
+        usable = max(source.length - win - win // 1000 - 6, 0)
+        positions = np.unique(np.linspace(0, usable, count).astype(int))
+        return cls._lazy(source, positions, win)
+
+    @classmethod
+    def _lazy(cls, source: audio.Source, positions: np.ndarray, win: int) -> Recording:
+        rec = cls(source.rate, source.length, positions, win)
+        rec.positions = np.array([p for p in positions if p + rec.span <= source.length] or [0])
+        rec.source = source
+        # mean power from a sample of windows (only used as a silence threshold)
+        sample = rec.positions[np.unique(np.linspace(0, len(rec.positions) - 1, 64).astype(int))]
+        energy = sum(float(np.dot(w, w)) for w in (rec.window(p)[0] for p in sample))
+        rec.mean_power = energy / max(len(sample) * rec.span, 1)
+        return rec
+
+
+class _Growing:
+    """A float32 buffer filled block by block, without a list-then-concatenate copy."""
+
+    def __init__(self, hint: int):
+        self.buf = np.zeros(max(hint, 1), dtype=np.float32)
+        self.n = 0
+
+    def add(self, x: np.ndarray) -> None:
+        if self.n + len(x) > len(self.buf):
+            self.buf = np.resize(self.buf, max(self.n + len(x), int(len(self.buf) * 1.25)))
+        self.buf[self.n : self.n + len(x)] = x
+        self.n += len(x)
+
+    def array(self) -> np.ndarray:
+        return self.buf[: self.n]
+
+
+def _collect(blocks, hint: int) -> np.ndarray:
+    g = _Growing(hint)
+    for b in blocks:
+        g.add(b)
+    return g.array()
+
+
+class References:
+    """One or more sample-parallel reference tracks (e.g. the channels of a desk).
+
+    Fine windows read short excerpts of a track. The coarse search needs a whole track
+    at COARSE_RATE; it is decoded for one track at a time and kept while it keeps working.
+    """
+
+    def __init__(self, sources: Sequence[audio.Source], paths: Sequence[Path | str] | None):
+        self.sources = list(sources)
+        self.paths = list(paths) if paths is not None else None
+        self._coarse: dict[int, np.ndarray] = {}
+        self.preferred = 0
+
+    @classmethod
+    def from_arrays(cls, refs: Sequence[np.ndarray], rate: int) -> References:
+        return cls([audio.ArraySource(r, rate) for r in refs], None)
+
+    @classmethod
+    def from_files(cls, paths: Sequence[Path | str], rate: int) -> References:
+        return cls([audio.open_source(p, rate) for p in paths], paths)
+
+    def __len__(self) -> int:
+        return len(self.sources)
+
+    def order(self) -> list[int]:
+        return [self.preferred] + [i for i in range(len(self)) if i != self.preferred]
+
+    def release(self) -> None:
+        """Forget the coarse copies of all tracks but the preferred one."""
+        for k in [k for k in self._coarse if k != self.preferred]:
+            del self._coarse[k]
+
+    def coarse(self, i: int) -> np.ndarray:
+        if i not in self._coarse:
+            self.release()  # bound memory: at most the preferred track and this one
+            src = self.sources[i]
+            if isinstance(src, audio.ArraySource):
+                self._coarse[i] = audio.resample(src.x, src.rate, COARSE_RATE)
+            else:
+                assert self.paths is not None
+                hint = int(src.length * COARSE_RATE / src.rate) + 1
+                self._coarse[i] = _collect(audio.stream_mono(self.paths[i], COARSE_RATE), hint)
+        return self._coarse[i]
+
+
 def align(ref: np.ndarray, other: np.ndarray, rate: int = ANALYSIS_RATE) -> Alignment:
     """Align ``other`` to ``ref``; both mono at ``rate`` Hz."""
-    ref = np.asarray(ref, dtype=np.float64)
-    other = np.asarray(other, dtype=np.float64)
-    t0, lag0 = _coarse(
-        audio.resample(ref, rate, COARSE_RATE),
-        audio.resample(other, rate, COARSE_RATE),
-        COARSE_RATE,
-    )
-    win = _window_length(len(other), rate)
-    matches = _fine(
+    return _align(References.from_arrays([ref], rate), Recording.from_array(other, rate))[1]
+
+
+def align_best(
+    refs: Sequence[np.ndarray], other: np.ndarray, rate: int = ANALYSIS_RATE
+) -> tuple[int, Alignment]:
+    """Align ``other`` to whichever of several sample-parallel reference tracks
+    (e.g. the channels of one desk) it agrees with best; return (index, alignment)."""
+    return _align(References.from_arrays(refs, rate), Recording.from_array(other, rate))
+
+
+def align_files(
+    ref_paths: Sequence[Path | str],
+    paths: Sequence[Path | str],
+    rate: int = ANALYSIS_RATE,
+    progress: Callable[[str, int, int], None] | None = None,
+) -> list[tuple[int, Alignment]]:
+    """Align each file to the best of the reference tracks.
+
+    Progress is reported in seconds of audio analysed, so time remaining can be
+    estimated from it."""
+    report = progress or (lambda what, done, total: None)
+    durations = [audio.probe(p).duration_s for p in paths]
+    total, done = round(sum(durations)), 0.0
+    refs = References.from_files(ref_paths, rate)
+    results = []
+    for path, duration in zip(paths, durations, strict=True):
+        report(f"analysing {Path(path).name}", round(done), total)
+        try:
+            results.append(_align(refs, Recording.from_file(path, rate)))
+        except ValueError as e:
+            raise ValueError(f"{Path(path).name}: {e}") from None
+        done += duration
+    report("analysing", total, total)
+    return results
+
+
+def check(
+    ref: audio.Source, other: audio.Source, expected_offset_s: float, count: int = CHECK_WINDOWS
+) -> Alignment:
+    """Measure ``other`` against ``ref`` at ``count`` windows near an expected offset and
+    zero drift: a fast, independent check of a corrected file."""
+    rec = Recording.sampled(other, count)
+    return _measure(
         ref,
-        other,
-        rate,
-        _positions(len(other), win, rate),
-        win,
-        lag_at=lambda t: lag0,
-        margin_at=lambda t: COARSE_TOLERANCE_S + MAX_DRIFT_PPM * 1e-6 * abs(t - t0),
+        rec,
+        rec.positions,
+        lag_at=lambda t: expected_offset_s,
+        margin_at=lambda t: COARSE_TOLERANCE_S + 50e-6 * t,
     )
+
+
+@dataclass(frozen=True)
+class _Anchor:
+    t0: float  # position in the other file (s)
+    lag0: float  # reference minus other time there (s)
+    slope: float | None  # lag change per second, if the coarse windows show it
+    support: int  # coarse windows agreeing
+    tried: int  # coarse windows with signal
+
+
+def _align(refs: References, rec: Recording) -> tuple[int, Alignment]:
+    anchor = _anchor(refs, rec)
+    narrow = anchor.slope is not None
+    result = _align_with(refs, rec, anchor, narrow)
+    if narrow and not result[1].reliable:
+        # the coarse slope may have been misleading: search the full drift range
+        wide = _align_with(refs, rec, anchor, narrow=False)
+        if _rank(wide[1]) > _rank(result[1]):
+            result = wide
+    return result
+
+
+def _align_with(
+    refs: References, rec: Recording, anchor: _Anchor, narrow: bool
+) -> tuple[int, Alignment]:
+    t0, lag0 = anchor.t0, anchor.lag0
+    if narrow:
+        slope = anchor.slope or 0.0
+
+        def lag_at(t):
+            return lag0 + slope * (t - t0)
+
+        def margin_at(t):
+            return NARROW_TOLERANCE_S + NARROW_DRIFT_PPM * 1e-6 * abs(t - t0)
+    else:
+
+        def lag_at(t):
+            return lag0
+
+        def margin_at(t):
+            return COARSE_TOLERANCE_S + MAX_DRIFT_PPM * 1e-6 * abs(t - t0)
+
+    candidates = [0]
+    if len(refs) > 1:
+        # screening: few windows on every track, more on the finalists. A file with weak
+        # shared sound has only ~15 % of windows on the line, so one small sample would
+        # pick almost at random among similar tracks.
+        n = len(rec.positions)
+        first = np.unique(np.linspace(0, n - 1, min(SCREEN_WINDOWS, n)).astype(int))
+        both = np.unique(
+            np.linspace(0, n - 1, min(SCREEN_WINDOWS + SCREEN_WINDOWS_2, n)).astype(int)
+        )
+        more = np.setdiff1d(both, first)
+        found = {
+            i: _fine(src, rec, rec.positions[first], lag_at, margin_at)
+            for i, src in enumerate(refs.sources)
+        }
+        ranked = sorted(found, key=lambda i: _screen_score(found[i]), reverse=True)
+        clear = _screen_score(found[ranked[0]])[0] >= SCREEN_CLEAR
+        finalists = ranked[:SCREEN_FINALISTS] if clear else ranked
+        for i in finalists:
+            found[i] = found[i] + _fine(
+                refs.sources[i], rec, rec.positions[more], lag_at, margin_at
+            )
+        ranked = sorted(finalists, key=lambda i: _screen_score(found[i]), reverse=True)
+        candidates = ranked[:SCREEN_KEEP]
+    best: tuple[int, Alignment] | None = None
+    for i in candidates:
+        try:
+            a = _measure(refs.sources[i], rec, rec.positions, lag_at, margin_at)
+        except ValueError:
+            continue
+        if best is None or _rank(a) > _rank(best[1]):
+            best = (i, a)
+    if best is None:
+        raise ValueError("the files do not seem to overlap")
+    return best
+
+
+def _screen_score(matches: list[_Match]) -> tuple[int, float]:
+    if len(matches) < 2:
+        return (0, 0.0)
+    t, lag, ncc = _arrays(matches)
+    _, _, inl = _consensus(t, lag, np.abs(ncc))
+    return (int(inl.sum()), float(np.abs(ncc[inl]).sum()))
+
+
+def _rank(a: Alignment) -> tuple[bool, int, float]:
+    return (a.reliable, a.windows_used, a.confidence)
+
+
+def _anchor(refs: References, rec: Recording) -> _Anchor:
+    """Coarse position: try reference tracks until one gives a clear answer."""
+    fallback = None
+    for i in refs.order():
+        found = _coarse(refs.coarse(i), rec.coarse, COARSE_RATE)
+        if found is None:
+            continue
+        if found.support >= min(2, found.tried):
+            refs.preferred = i
+            refs.release()
+            return found
+        if fallback is None or found.support > fallback.support:
+            fallback = found
+    if fallback is None:
+        raise ValueError("no usable audio in the file to align")
+    return fallback
+
+
+def _measure(
+    ref: audio.Source,
+    rec: Recording,
+    positions: np.ndarray,
+    lag_at: Callable[[float], float],
+    margin_at: Callable[[float], float],
+) -> Alignment:
+    """Fine windows, consensus line, then the agreeing windows again with drift undone."""
+    matches = _fine(ref, rec, positions, lag_at, margin_at)
     if not matches:
         raise ValueError("the files do not seem to overlap")
     t, lag, ncc = _arrays(matches)
@@ -112,14 +444,11 @@ def align(ref: np.ndarray, other: np.ndarray, rate: int = ANALYSIS_RATE) -> Alig
     wander = _wander(t, lag - (intercept + slope * t))
     first = _result(slope, intercept, ncc[inlier], len(matches), wander)
 
-    # refine the agreeing windows with the drift undone inside each window
     stretch = 1 / (1 + first.drift_ppm * 1e-6)
     refined = _fine(
         ref,
-        other,
-        rate,
+        rec,
         np.array([m.pos for m, ok in zip(matches, inlier, strict=True) if ok]),
-        win,
         lag_at=lambda t: first.ref_time(t) - t,
         margin_at=lambda t: REFINE_MARGIN_S,
         stretch=stretch,
@@ -131,63 +460,63 @@ def align(ref: np.ndarray, other: np.ndarray, rate: int = ANALYSIS_RATE) -> Alig
     return _result(slope, intercept, ncc, len(matches), wander, used=first.windows_used)
 
 
-def align_best(
-    refs: Sequence[np.ndarray], other: np.ndarray, rate: int = ANALYSIS_RATE
-) -> tuple[int, Alignment]:
-    """Align ``other`` to whichever of several sample-parallel reference tracks
-    (e.g. the channels of one desk) it agrees with best; return (index, alignment)."""
-    best: tuple[int, Alignment] | None = None
-    for i, ref in enumerate(refs):
-        try:
-            a = align(ref, other, rate)
-        except ValueError:
-            continue
-        if best is None or _rank(a) > _rank(best[1]):
-            best = (i, a)
-    if best is None:
-        raise ValueError("no reference track overlaps the file")
-    return best
-
-
-def align_files(
-    ref_paths: Sequence[Path | str], paths: Sequence[Path | str], rate: int = ANALYSIS_RATE
-) -> list[tuple[int, Alignment]]:
-    """Align each file to the best of the reference tracks; one reference track is
-    decoded at a time, the files to align stay in memory."""
-    others = [audio.load(p, rate) for p in paths]
-    best: list[tuple[int, Alignment] | None] = [None] * len(others)
-    errors: list[str] = [""] * len(others)
-    for i, ref_path in enumerate(ref_paths):
-        ref = audio.load(ref_path, rate)
-        for k, other in enumerate(others):
-            try:
-                a = align(ref, other, rate)
-            except ValueError as e:
-                errors[k] = str(e)
-                continue
-            if best[k] is None or _rank(a) > _rank(best[k][1]):
-                best[k] = (i, a)
-    for k, b in enumerate(best):
-        if b is None:
-            raise ValueError(f"{Path(paths[k]).name}: {errors[k]}")
-    return best  # type: ignore[return-value]
-
-
-def _rank(a: Alignment) -> tuple[bool, int, float]:
-    return (a.reliable, a.windows_used, a.confidence)
-
-
 # --- correlation -----------------------------------------------------------
 
 
-def _ncc_valid(ref: np.ndarray, win: np.ndarray) -> np.ndarray:
-    """Normalised correlation of ``win`` at every start position inside ``ref``."""
-    c = sps.fftconvolve(ref, win[::-1], mode="valid")
+def _ncc_valid(ref: np.ndarray, win: np.ndarray, mean_power: float | None = None) -> np.ndarray:
+    """Normalised correlation of ``win`` at every start position inside ``ref``.
+    ``mean_power`` of the whole reference sets the silence floor (default: of ``ref``)."""
+    ref = np.asarray(ref, dtype=np.float64)
+    win = np.asarray(win, dtype=np.float64)
+    n = sp_fft.next_fast_len(len(ref), real=True)
+    c = sp_fft.irfft(
+        sp_fft.rfft(ref, n, workers=FFT_WORKERS)
+        * np.conj(sp_fft.rfft(win, n, workers=FFT_WORKERS)),
+        n,
+        workers=FFT_WORKERS,
+    )[: len(ref) - len(win) + 1]
     cs = np.concatenate([[0.0], np.cumsum(np.square(ref))])
     local = cs[len(win) :] - cs[: len(cs) - len(win)]
     e_win = float(np.dot(win, win))
-    floor = 1e-4 * cs[-1] / max(len(ref), 1) * len(win)  # ignore near-silent stretches
+    if mean_power is None:
+        mean_power = cs[-1] / max(len(ref), 1)
+    floor = 1e-4 * mean_power * len(win)  # ignore near-silent stretches
     return c / np.sqrt(e_win * np.maximum(local, floor) + 1e-30)
+
+
+def _best_match(ref: np.ndarray, win: np.ndarray, pad: int, mean_power: float) -> tuple[int, float]:
+    """(start, signed ncc) of the strongest match of ``win`` in ``ref`` with ``pad`` zeros
+    on both sides (so ``win`` may hang over either end). Works in chunks, so no copy of
+    ``ref`` is made and memory stays bounded however long it is."""
+    total = len(ref) + 2 * pad
+    best_k, best_v = 0, 0.0
+    step = max(COARSE_CHUNK, 4 * len(win))
+    for lo in range(0, max(total - len(win) + 1, 1), step):
+        chunk = _padded_slice(ref, pad, lo, min(lo + step + len(win) - 1, total))
+        if len(chunk) < len(win):
+            break
+        ncc = _ncc_valid(chunk, win, mean_power)
+        k = int(np.argmax(np.abs(ncc)))
+        if abs(ncc[k]) > abs(best_v):
+            best_k, best_v = lo + k, float(ncc[k])
+    return best_k, best_v
+
+
+def _padded_slice(x: np.ndarray, pad: int, lo: int, hi: int) -> np.ndarray:
+    """``[zeros(pad), x, zeros(pad)][lo:hi]`` without building the padded array."""
+    out = np.zeros(hi - lo, dtype=np.float32)
+    a, b = max(lo - pad, 0), min(hi - pad, len(x))
+    if b > a:
+        out[a + pad - lo : b + pad - lo] = x[a:b]
+    return out
+
+
+def _mean_power(x: np.ndarray, block: int = 1 << 22) -> float:
+    total = 0.0
+    for lo in range(0, len(x), block):
+        part = np.asarray(x[lo : lo + block], dtype=np.float32)
+        total += float(np.dot(part, part))
+    return total / max(len(x), 1)
 
 
 def _parabolic(y: np.ndarray, k: int) -> float:
@@ -199,17 +528,19 @@ def _parabolic(y: np.ndarray, k: int) -> float:
 
 
 def _energy_ok(win: np.ndarray, mean_power: float) -> bool:
-    return float(np.mean(np.square(win))) > 1e-3 * mean_power
+    return float(np.mean(np.square(win, dtype=np.float64))) > 1e-3 * mean_power
 
 
 # --- stages ----------------------------------------------------------------
 
 
-def _coarse(ref: np.ndarray, other: np.ndarray, rate: int) -> tuple[float, float]:
-    """(position in other, lag) in seconds for the best-supported coarse window."""
+def _coarse(ref: np.ndarray, other: np.ndarray, rate: int) -> _Anchor | None:
+    """The best-supported coarse window's position and lag, with the slope through the
+    windows agreeing with it when they lie far enough apart; None without usable audio."""
     win = min(len(other), int(COARSE_WINDOW_S * rate))
-    pad = np.zeros(win)
-    padded = np.concatenate([pad, ref, pad])  # lets the other file start before/after ref
+    # the reference is padded by one window on both sides so the other file may start
+    # before or end after it
+    power = _mean_power(ref) * len(ref) / max(len(ref) + 2 * win, 1)
     count = min(COARSE_WINDOWS, 1 + (len(other) - win) // max(win // 2, 1))
     mean_power = float(np.mean(np.square(other))) if len(other) else 0.0
     cands = []
@@ -217,21 +548,27 @@ def _coarse(ref: np.ndarray, other: np.ndarray, rate: int) -> tuple[float, float
         seg = other[p : p + win]
         if not _energy_ok(seg, mean_power):
             continue
-        ncc = _ncc_valid(padded, seg)
-        k = int(np.argmax(np.abs(ncc)))
-        cands.append((p / rate, (k - win - p) / rate, abs(ncc[k])))
+        k, v = _best_match(ref, seg, win, power)
+        cands.append((p / rate, (k - win - p) / rate, abs(v)))
     if not cands:
-        raise ValueError("no usable audio in the file to align")
+        return None
 
-    def support(c):
-        return sum(
-            s
+    def agree(c):
+        return [
+            (t, lag, s)
             for t, lag, s in cands
             if abs(lag - c[1]) <= COARSE_TOLERANCE_S + MAX_DRIFT_PPM * 1e-6 * abs(t - c[0])
-        )
+        ]
 
-    best = max(cands, key=lambda c: (support(c), c[2]))
-    return best[0], best[1]
+    best = max(cands, key=lambda c: (sum(s for *_, s in agree(c)), c[2]))
+    agreeing = agree(best)
+    slope = None
+    ts = np.array([t for t, _, _ in agreeing])
+    if len(agreeing) >= 2 and np.ptp(ts) >= NARROW_MIN_SPAN_S:
+        slope = float(np.polyfit(ts, [lag for _, lag, _ in agreeing], 1)[0])
+        if abs(slope) > MAX_DRIFT_PPM * 1e-6:
+            slope = None
+    return _Anchor(best[0], best[1], slope, len(agreeing), len(cands))
 
 
 def _window_length(n_other: int, rate: int) -> int:
@@ -251,45 +588,44 @@ def _positions(n_other: int, win: int, rate: int) -> np.ndarray:
 
 
 def _fine(
-    ref: np.ndarray,
-    other: np.ndarray,
-    rate: int,
+    ref: audio.Source,
+    rec: Recording,
     positions: np.ndarray,
-    win: int,
     lag_at: Callable[[float], float],
     margin_at: Callable[[float], float],
     stretch: float = 1.0,
 ) -> list[_Match]:
-    """Correlate windows of ``other`` starting at ``positions`` against ``ref`` near the
-    predicted lag.
+    """Correlate the windows of ``rec`` starting at ``positions`` against excerpts of
+    ``ref`` near the predicted lag.
 
     ``stretch`` is the expected reference time per unit of other time (``1 + slope``);
     each window is resampled by it so drift does not smear the correlation peak.
     """
-    span = int(np.ceil(win / stretch)) + 1  # other samples a window covers
-    mean_power = float(np.mean(np.square(other)))
+    rate, win = rec.rate, rec.win
+    span = min(int(np.ceil(win / stretch)) + 1, rec.span)  # other samples a window covers
     grid = np.arange(win) / stretch
     matches = []
     for p in positions:
-        p = int(min(p, len(other) - span))
-        seg = np.interp(p + grid, np.arange(p, p + span), other[p : p + span])
-        if not _energy_ok(seg, mean_power):
+        stored, x0 = rec.window(int(p))
+        seg = stored[:win] if stretch == 1.0 else np.interp(grid, np.arange(span), stored[:span])
+        if not _energy_ok(seg, rec.mean_power):
             continue
-        t, margin = p / rate, margin_at(p / rate)
+        t, margin = x0 / rate, margin_at(x0 / rate)
         lo = max(0, int(np.floor((t + lag_at(t) - margin) * rate)))
-        hi = min(len(ref), int(np.ceil((t + lag_at(t) + margin) * rate)) + win)
+        hi = min(ref.length, int(np.ceil((t + lag_at(t) + margin) * rate)) + win)
         if hi - lo < win:
             continue  # window lies outside the reference
-        ncc = _ncc_valid(ref[lo:hi], seg)
+        excerpt, r0 = ref.read(lo, hi - lo)
+        ncc = _ncc_valid(excerpt, seg)
         k = int(np.argmax(np.abs(ncc)))
         sign = 1.0 if ncc[k] >= 0 else -1.0
-        start = lo + k + _parabolic(sign * ncc, k)  # reference sample where seg starts
+        start = r0 + k + _parabolic(sign * ncc, k)  # reference sample where seg starts
         # report the lag at the window's energy centroid, where any residual
         # stretch cancels out
-        power = np.square(seg)
+        power = np.square(seg, dtype=np.float64)
         c = float(np.dot(np.arange(win), power) / power.sum())
-        t_c = p + c / stretch
-        matches.append(_Match(p, t_c / rate, (start + c - t_c) / rate, float(ncc[k])))
+        t_c = x0 + c / stretch
+        matches.append(_Match(int(p), t_c / rate, (start + c - t_c) / rate, float(ncc[k])))
     return matches
 
 

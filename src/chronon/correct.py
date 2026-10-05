@@ -94,9 +94,7 @@ def analyse(
     Of several reference tracks only those some file matched best are exported (plus the
     first), unless ``all_refs``; all of them are still used to find the best match."""
     report = progress or (lambda what, done, total: None)
-    report("analysing", 0, len(files))
-    results = align.align_files(refs, files)
-    report("analysing", len(files), len(files))
+    results = align.align_files(refs, files, progress=report)
     used = {0} | {i for i, _ in results}
     identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
     entries: list[Entry] = [
@@ -308,22 +306,25 @@ def write(out: Output, progress: Callable[[int, int], None] | None = None) -> No
 
 
 def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
-    """Measure every written file against its reference track's output again."""
+    """Measure every written file against its reference track's output again, at
+    CHECK_WINDOWS windows spread over the file (excerpts only, nothing loaded whole)."""
     report = progress or (lambda what, done, total: None)
     by_source = {o.source: o for o in outputs}
     todo = [o for o in outputs if not o.is_reference]
     for k, out in enumerate(todo):
         report("verifying", k, len(todo))
         ref = by_source[out.reference]
+        expected = out.start_s - ref.start_s
         try:
-            a = align.align(
-                audio.load(ref.path, align.ANALYSIS_RATE), audio.load(out.path, align.ANALYSIS_RATE)
+            a = align.check(
+                audio.open_source(ref.path, align.ANALYSIS_RATE),
+                audio.open_source(out.path, align.ANALYSIS_RATE),
+                expected,
             )
         except ValueError as e:
             out.verified = False
             out.notes.append(f"verification failed: {e}")
             continue
-        expected = out.start_s - ref.start_s
         out.verify_offset_ms = (a.offset_s - expected) * 1e3
         out.verify_drift_ppm = a.drift_ppm
         out.verified = (

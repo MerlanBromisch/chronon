@@ -11,7 +11,12 @@ from math import gcd
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
+import soxr
 from scipy import signal as sps
+
+RESAMPLE_QUALITY = "HQ"
+EXCERPT_PAD_S = 0.05  # extra audio read on both sides of an excerpt for the resampler
 
 
 class AudioError(RuntimeError):
@@ -146,3 +151,99 @@ def resample(x: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
         return np.asarray(x, dtype=np.float32)
     g = gcd(rate_in, rate_out)
     return sps.resample_poly(x, rate_out // g, rate_in // g).astype(np.float32)
+
+
+# --- analysis-rate access ----------------------------------------------------
+#
+# Analysis works on mono audio at one rate. A file being aligned is decoded once, as a
+# stream; reference tracks are read as short excerpts wherever a window needs them, so
+# no whole recording is ever held in memory. Both paths resample with libsoxr, so their
+# time bases agree exactly.
+
+
+def stream_mono(path: Path | str, rate: int, block_frames: int = 1 << 16) -> Iterator[np.ndarray]:
+    """The first audio stream of ``path`` as mono float32 blocks at ``rate`` Hz."""
+    info = probe(path)
+    rs = None
+    if info.sample_rate != rate:
+        rs = soxr.ResampleStream(
+            info.sample_rate, rate, 1, dtype="float32", quality=RESAMPLE_QUALITY
+        )
+    prev = None
+    for block in stream(path, info.channels, block_frames):
+        mono = block.mean(axis=1) if info.channels > 1 else block[:, 0]
+        if rs is None:
+            yield np.ascontiguousarray(mono, dtype=np.float32)
+            continue
+        if prev is not None:
+            yield rs.resample_chunk(prev)
+        prev = mono
+    if rs is not None:
+        yield rs.resample_chunk(prev if prev is not None else np.zeros(0, np.float32), last=True)
+
+
+class Source:
+    """Random access to a recording at the analysis rate."""
+
+    rate: int
+    length: int  # samples at ``rate``
+
+    def read(self, start: int, n: int) -> tuple[np.ndarray, float]:
+        """About ``n`` samples from analysis sample ``start`` on, zeros outside the
+        recording, and the exact analysis-sample position of the first returned sample
+        (it can be fractional when the native rate is not a multiple of the analysis rate)."""
+        raise NotImplementedError
+
+
+class ArraySource(Source):
+    def __init__(self, x: np.ndarray, rate: int):
+        self.x = np.asarray(x, dtype=np.float32)
+        self.rate = rate
+        self.length = len(self.x)
+
+    def read(self, start: int, n: int) -> tuple[np.ndarray, float]:
+        out = np.zeros(n, dtype=np.float32)
+        lo, hi = max(start, 0), min(start + n, self.length)
+        if hi > lo:
+            out[lo - start : hi - start] = self.x[lo:hi]
+        return out, float(start)
+
+
+class FileSource(Source):
+    """Excerpts read straight from a PCM file (WAV, AIFF, CAF, ...) by seeking."""
+
+    def __init__(self, path: Path | str, rate: int):
+        self.path = Path(path)
+        self.file = sf.SoundFile(str(path))
+        self.native = self.file.samplerate
+        self.rate = rate
+        self.length = int(self.file.frames * rate / self.native)
+
+    def read(self, start: int, n: int) -> tuple[np.ndarray, float]:
+        ratio = self.native / self.rate
+        pad = int(EXCERPT_PAD_S * self.native)
+        first = int(np.floor(start * ratio))  # native sample at or before ``start``
+        lo = first - pad
+        count = int(np.ceil(n * ratio)) + 2 * pad + 2
+        data = np.zeros(count, dtype=np.float32)
+        a, b = max(lo, 0), min(lo + count, self.file.frames)
+        if b > a:
+            self.file.seek(a)
+            block = self.file.read(b - a, dtype="float32", always_2d=True)
+            data[a - lo : a - lo + len(block)] = block.mean(axis=1)
+        if self.native != self.rate:
+            data = soxr.resample(data, self.native, self.rate, quality=RESAMPLE_QUALITY)
+        skip = int(round(pad / ratio))
+        exact = (lo + skip * ratio) / ratio  # analysis position of data[skip]
+        return np.ascontiguousarray(data[skip : skip + n]), exact
+
+    def close(self) -> None:
+        self.file.close()
+
+
+def open_source(path: Path | str, rate: int) -> Source:
+    """Excerpt access for PCM files, else the whole file decoded into memory."""
+    try:
+        return FileSource(path, rate)
+    except (RuntimeError, sf.LibsndfileError):
+        return ArraySource(np.concatenate(list(stream_mono(path, rate)) or [np.zeros(0)]), rate)
