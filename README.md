@@ -77,7 +77,9 @@ Files are grouped into devices automatically (`--separate` to switch off): paral
 of one recording (desk channels, a recorder's inputs) are measured once and corrected alike, so
 e.g. all 32 channels of a desk can be passed at once; numbered clips of one recorder
 (ZOOM0003/ZOOM0004) share a timeline lane, and a clip too short to show its own drift takes it
-from its sibling. Tracks recorded with the reference (same clock and start) are not measured.
+from its sibling. Tracks recorded with the reference (same clock and start) are not measured. A clip that never
+overlaps the reference (a camera that started before the desk) is placed through a clip of
+another device it does overlap, e.g. the Zoom; the two measurements are composed exactly.
 
 In a terminal, all commands show the current step, its progress and the time left.
 `chronon timeline OUTDIR` rebuilds the `.fcpxml` of an earlier run from its report in seconds.

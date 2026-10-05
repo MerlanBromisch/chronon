@@ -126,3 +126,50 @@ def test_a_short_weak_clip_takes_its_siblings_drift(tmp_path):
     truth = align.Alignment(*synth.expected_alignment(0.0, 0.0, 800.0, drift), 1.0, False, 1, 1)
     t = np.array([0.0, 25.0])
     assert np.max(np.abs(short.alignment.ref_time(t) - truth.ref_time(t))) < 1e-4
+
+
+@needs_ffmpeg
+def test_a_clip_off_the_reference_is_linked_through_another_device(tmp_path):
+    # desk 0-100 s, Zoom 50-300 s, camera 200-260 s: the camera never meets the desk
+    scenario = Scenario(
+        signal="speech",
+        seed=43,
+        devices=(
+            Device("desk", (Clip(0.0, 100.0),)),
+            Device("zoom", (Clip(50.0, 250.0),), drift_ppm=-20.0, snr_db=25.0, rt60_s=0.4),
+            Device("cam", (Clip(200.0, 60.0),), sample_rate=44_100, drift_ppm=35.0, snr_db=20.0),
+        ),
+    )
+    synth.write(scenario, tmp_path)
+    zoom, cam = tmp_path / "zoom_01.wav", tmp_path / "cam_01.wav"
+    rz, rc = align.align_files([tmp_path / "desk_01.wav"], [zoom, cam])
+    assert rz.linked_via is None and rc.linked_via == zoom
+    offset, drift = synth.expected_alignment(0.0, 0.0, 200.0, 35.0)
+    truth = align.Alignment(offset, drift, 1.0, False, 1, 1)
+    t = np.array([0.0, 60.0])
+    assert np.max(np.abs(rc.alignment.ref_time(t) - truth.ref_time(t))) < 1e-4
+    assert rc.alignment.drift_ppm == pytest.approx(35.0, abs=1.0)
+
+
+@needs_ffmpeg
+def test_linked_clips_are_corrected_and_verified(tmp_path):
+    from chronon import correct
+
+    scenario = Scenario(
+        signal="speech",
+        seed=44,
+        devices=(
+            Device("desk", (Clip(0.0, 100.0),)),
+            Device("zoom", (Clip(50.0, 250.0),), drift_ppm=-20.0, snr_db=25.0),
+            Device("cam", (Clip(200.0, 60.0),), drift_ppm=35.0, snr_db=20.0),
+        ),
+    )
+    media = tmp_path / "media"
+    synth.write(scenario, media)
+    outputs = correct.run(
+        [media / "desk_01.wav"], [media / "zoom_01.wav", media / "cam_01.wav"], tmp_path / "out"
+    )
+    cam = next(o for o in outputs if o.source.endswith("cam_01.wav"))
+    assert cam.reference.endswith("zoom_01.wav")
+    assert cam.verified
+    assert cam.position_s == pytest.approx(200.0, abs=1e-3)
