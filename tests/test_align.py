@@ -250,7 +250,8 @@ def test_files_end_to_end(tmp_path, capsys):
     assert main(["eval", str(tmp_path)]) == 0
     assert "cam_01.wav" in capsys.readouterr().out
     assert main(["analyze", str(tmp_path / "rec_01.wav"), str(tmp_path / "cam_01.wav")]) == 0
-    assert "4.2000" in capsys.readouterr().out
+    row = next(r for r in capsys.readouterr().out.splitlines() if r.startswith("cam_01.wav"))
+    assert float(row.split()[1]) == pytest.approx(4.2, abs=TIME_TOL_S)
 
 
 @needs_ffmpeg

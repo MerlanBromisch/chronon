@@ -18,8 +18,11 @@ anything but zero offset and zero drift fails the export.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import threading
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -37,6 +40,7 @@ VERIFY_OFFSET_TOL_S = 5e-4
 VERIFY_DRIFT_TOL_PPM = 0.2
 FORMATS = ("auto", "wav", "caf")
 BLOCK_FRAMES = 1 << 16
+WRITE_THREADS = min(4, os.cpu_count() or 1)
 
 Progress = Callable[[str, int, int], None]  # (what, done, total) in real work units
 
@@ -61,6 +65,7 @@ class Output:
     frames: int  # output frames including padding
     format: str
     has_video: bool = False
+    check_at_s: list[float] = field(default_factory=list)  # output times to verify at
     verify_offset_ms: float | None = None
     verify_drift_ppm: float | None = None
     verified: bool | None = None
@@ -94,9 +99,7 @@ def analyse(
     Of several reference tracks only those some file matched best are exported (plus the
     first), unless ``all_refs``; all of them are still used to find the best match."""
     report = progress or (lambda what, done, total: None)
-    report("analysing", 0, len(files))
-    results = align.align_files(refs, files)
-    report("analysing", len(files), len(files))
+    results = align.align_files(refs, files, progress=report)
     used = {0} | {i for i, _ in results}
     identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
     entries: list[Entry] = [
@@ -127,10 +130,7 @@ def run(
     _check_space(outdir, outputs)
 
     outdir.mkdir(parents=True, exist_ok=True)
-    for k, out in enumerate(outputs):
-        label = f"writing {Path(out.path).name} ({k + 1}/{len(outputs)})"
-        report(label, 0, out.frames)
-        write(out, lambda done, total, label=label: report(label, done, total))
+    write_all(outputs, report)
 
     verify(outputs, report)
     placed = _write_timeline(_corrected_items(outputs), outdir, name)
@@ -255,6 +255,9 @@ def plan(
             format="wav",
         )
         out.has_video = info.has_video
+        # where the analysis could measure this file, in output file time
+        lead = out.position_s - out.start_s
+        out.check_at_s = [lead + t / (1 + a.drift_ppm * 1e-6) for t in a.good_s]
         out.format = fmt if fmt != "auto" else ("caf" if out.bytes > CAF_ABOVE_BYTES else "wav")
         if fmt == "auto" and out.format == "caf":
             out.notes.append("written as CAF: over 2 GiB")
@@ -307,28 +310,58 @@ def write(out: Output, progress: Callable[[int, int], None] | None = None) -> No
     out.frames = done
 
 
+def write_all(outputs: Sequence[Output], progress: Progress | None = None) -> None:
+    """Write several files at once (resampling is the bottleneck and runs on one core per
+    file). Progress counts output frames over all files."""
+    report = progress or (lambda what, done, total: None)
+    total = sum(o.frames for o in outputs)
+    done = dict.fromkeys(range(len(outputs)), 0)
+    lock = threading.Lock()
+    report("writing", 0, total)
+
+    def one(k: int) -> None:
+        def step(n: int, _total: int) -> None:
+            with lock:
+                done[k] = n
+                current = sum(done.values())
+            report("writing", min(current, total), total)
+
+        write(outputs[k], step)
+
+    with ThreadPoolExecutor(max_workers=WRITE_THREADS, thread_name_prefix="chronon-write") as ex:
+        list(ex.map(one, range(len(outputs))))  # re-raises the first error
+    report("writing", total, total)
+
+
 def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
-    """Measure every written file against its reference track's output again."""
+    """Measure every written file against its reference track's output again, at
+    CHECK_WINDOWS windows spread over the file (excerpts only, nothing loaded whole)."""
     report = progress or (lambda what, done, total: None)
     by_source = {o.source: o for o in outputs}
     todo = [o for o in outputs if not o.is_reference]
     for k, out in enumerate(todo):
         report("verifying", k, len(todo))
         ref = by_source[out.reference]
+        expected = out.start_s - ref.start_s
         try:
-            a = align.align(
-                audio.load(ref.path, align.ANALYSIS_RATE), audio.load(out.path, align.ANALYSIS_RATE)
+            a = align.check(
+                audio.open_source(ref.path, align.ANALYSIS_RATE),
+                audio.open_source(out.path, align.ANALYSIS_RATE),
+                expected,
+                audio_from_s=out.pad_frames / out.out_rate,
+                at_s=out.check_at_s,
             )
         except ValueError as e:
             out.verified = False
             out.notes.append(f"verification failed: {e}")
             continue
-        expected = out.start_s - ref.start_s
-        out.verify_offset_ms = (a.offset_s - expected) * 1e3
+        # the error in the middle of the measured part, not extrapolated into padding
+        mid = (min(a.good_s) + max(a.good_s)) / 2 if a.good_s else 0.0
+        error = float(a.ref_time(mid) - mid) - expected
+        out.verify_offset_ms = error * 1e3
         out.verify_drift_ppm = a.drift_ppm
         out.verified = (
-            abs(a.offset_s - expected) <= VERIFY_OFFSET_TOL_S
-            and abs(a.drift_ppm) <= VERIFY_DRIFT_TOL_PPM
+            abs(error) <= VERIFY_OFFSET_TOL_S and abs(a.drift_ppm) <= VERIFY_DRIFT_TOL_PPM
         )
         if not out.verified:
             out.notes.append("VERIFICATION FAILED: output is not in sync with the reference")
@@ -336,7 +369,10 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
 
 
 def write_report(outputs: Sequence[Output], outdir: Path) -> None:
-    data = [asdict(o) | {"start_s": o.start_s} for o in outputs]
+    data = [
+        {k: v for k, v in asdict(o).items() if k != "check_at_s"} | {"start_s": o.start_s}
+        for o in outputs
+    ]
     (outdir / "chronon-report.json").write_text(json.dumps(data, indent=2) + "\n")
     (outdir / "chronon-report.txt").write_text(format_report(outputs) + "\n")
 

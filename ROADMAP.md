@@ -5,12 +5,14 @@ These apply to every stage and decide trade-offs.
 
 - **Fast.** Sync should feel instant, as PluralEyes did — no waiting minutes on a crawling bar.
   Target: the 4 h musical (18 desk tracks, Zoom, 4 camera files) in under a minute on an
-  Apple-silicon Mac. Today: 23 min.
+  Apple-silicon Mac. Baseline 2026-10-05: 1242 s; now 46 s (`scripts/bench.py sync`). ✓
 - **Honest progress.** Show how long the sync will still take (time remaining), based on the
-  work actually left, not a bar that just moves.
-- **Small memory footprint.** Under 1 GB peak, independent of recording length. Today: about
-  10 GB for a 4 h reference (22 GB for `correct` on the musical), because analysis holds whole
-  files in memory.
+  work actually left, not a bar that just moves. ✓ in the CLI: step, percentage and time left,
+  measured in seconds of audio analysed / samples written / files checked; on the musical the
+  prediction was within 1–2 s of the actual time left.
+- **Small memory footprint.** Under 1 GB peak, independent of recording length. Baseline:
+  18.5 GB; now ~690 MB ✓ — references and PCM files are read as excerpts, only video files
+  are streamed once with their measurement windows kept (half precision).
 - **Accurate and honest results.** Every file within 0.1 ms where the material allows it, and
   a clear "no reliable match" instead of a made-up number.
 
@@ -39,7 +41,7 @@ These apply to every stage and decide trade-offs.
 - [x] Rooms with several sources at different distances (RANSAC line fit)
 - [ ] Robust features for music, silence, reverb, very different mics
 - [ ] Non-linear clock drift: detected (`wander_ms`), not yet corrected (piecewise fit)
-- [ ] Stream long files instead of holding them in memory (see Goals)
+- [x] Stream long files instead of holding them in memory (see Goals)
 - [ ] Video drift via retiming in the export (no video re-encode)
 - [ ] Variable frame rate (phone) footage
 - [ ] Premiere Pro XML and DaVinci Resolve export

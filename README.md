@@ -69,6 +69,7 @@ uv run chronon sync -r desk/ch18.wav zoom.wav camera.mp4 -o ~/Desktop/timeline
 ```
 
 With several `-r` tracks only those some file matched best are exported (`--all-refs` for all).
+In a terminal, all commands show the current step, its progress and the time left.
 `chronon timeline OUTDIR` rebuilds the `.fcpxml` of an earlier run from its report in seconds.
 
 `chronon synth` writes one WAV per clip plus a `truth.json` holding each device's true start times
