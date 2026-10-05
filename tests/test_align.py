@@ -243,7 +243,8 @@ def test_files_end_to_end(tmp_path, capsys):
     loaded = audio.load(tmp_path / "cam_01.wav", RATE)
     assert len(loaded) == pytest.approx(20.0 * (1 + 45e-6) * RATE, abs=2)
 
-    ((_, a),) = align.align_files([tmp_path / "rec_01.wav"], [tmp_path / "cam_01.wav"])
+    (result,) = align.align_files([tmp_path / "rec_01.wav"], [tmp_path / "cam_01.wav"])
+    a = result.alignment
     assert a.offset_s == pytest.approx(4.2, abs=TIME_TOL_S)
     assert a.drift_ppm == pytest.approx(45.0, abs=DRIFT_TOL_PPM)
 
@@ -251,7 +252,7 @@ def test_files_end_to_end(tmp_path, capsys):
     assert "cam_01.wav" in capsys.readouterr().out
     assert main(["analyze", str(tmp_path / "rec_01.wav"), str(tmp_path / "cam_01.wav")]) == 0
     row = next(r for r in capsys.readouterr().out.splitlines() if r.startswith("cam_01.wav"))
-    assert float(row.split()[1]) == pytest.approx(4.2, abs=TIME_TOL_S)
+    assert float(row.split()[2]) == pytest.approx(4.2, abs=TIME_TOL_S)
 
 
 @needs_ffmpeg

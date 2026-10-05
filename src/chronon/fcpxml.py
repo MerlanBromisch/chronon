@@ -54,6 +54,7 @@ class Item:
     position_s: float  # timeline time of the media's first sample / frame
     drift_ppm: float = 0.0  # drift still in the media (0 for corrected audio)
     video_only: bool = False  # its audio is replaced by a corrected file
+    group: str = ""  # device; one lane per device (default: file name without its number)
 
 
 @dataclass(frozen=True)
@@ -220,23 +221,21 @@ def _assign_lanes(placed: list[Placed]) -> None:
         lanes: list[tuple[str, list[tuple[Fraction, Fraction]]]] = []
         for p in sorted(
             (p for p in placed if p.media.has_video == video),
-            key=lambda p: (_group(p.item.path), p.offset),
+            key=lambda p: (_group(p.item), p.offset),
         ):
             span = (p.offset, p.offset + p.duration)
             for k, (group, spans) in enumerate(lanes):
-                if group == _group(p.item.path) and all(
-                    span[0] >= e or span[1] <= s for s, e in spans
-                ):
+                if group == _group(p.item) and all(span[0] >= e or span[1] <= s for s, e in spans):
                     spans.append(span)
                     p.lane = (k + 1) if video else -(k + 1)
                     break
             else:
-                lanes.append((_group(p.item.path), [span]))
+                lanes.append((_group(p.item), [span]))
                 p.lane = len(lanes) if video else -len(lanes)
 
 
-def _group(path: Path) -> str:
-    return re.sub(r"\d+$", "", path.stem) or path.stem
+def _group(item: Item) -> str:
+    return item.group or re.sub(r"\d+$", "", item.path.stem) or item.path.stem
 
 
 # --- media -----------------------------------------------------------------

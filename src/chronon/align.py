@@ -32,7 +32,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -40,7 +40,7 @@ import soundfile as sf
 import soxr
 from scipy import fft as sp_fft
 
-from chronon import audio
+from chronon import audio, devices
 
 ANALYSIS_RATE = 16_000
 COARSE_RATE = 2_000
@@ -56,11 +56,15 @@ COARSE_TOLERANCE_S = 0.05
 REFINE_MARGIN_S = 0.005
 SCREEN_WINDOWS = 48  # per reference track when choosing among several ...
 SCREEN_FINALISTS = 4  # ... then this many tracks get SCREEN_WINDOWS_2 more windows ...
+SCREEN_UNCLEAR_MAX = 18  # finalists when no pair stands out (all of them for one track)
 SCREEN_CLEAR = 12  # ... (all tracks, if no track reached this many agreeing windows) ...
 SCREEN_WINDOWS_2 = 96
 CHECK_WINDOWS = 192  # for check(): measuring an already corrected file
 FFT_WORKERS = 1  # per FFT; windows already run in parallel threads
 FINE_THREADS = min(6, os.cpu_count() or 1)
+LEAD_TRIES = 6  # parallel tracks tried for the coarse position (loudest first)
+COARSE_REF_TRIES = 4  # reference tracks tried for the coarse position of one file
+BORROW_SPAN_S = 600.0  # a clip measurable over less than this takes a sibling's drift
 COARSE_CHUNK = 1 << 20  # coarse search in chunks: bounded memory on long references
 SCREEN_KEEP = 2  # ... and this many are measured in full
 # When the coarse windows already show the drift, fine windows search only this far from it
@@ -86,6 +90,7 @@ class Alignment:
     wander_ms: float = 0.0  # largest deviation of a quarter of the file from the line
     # times (s, in the other file) of the windows on the line: where this pair can be measured
     good_s: tuple[float, ...] = field(default=(), repr=False, compare=False)
+    good_lag: tuple[float, ...] = field(default=(), repr=False, compare=False)
 
     @property
     def reliable(self) -> bool:
@@ -248,7 +253,8 @@ class References:
         self.sources = list(sources)
         self.paths = list(paths) if paths is not None else None
         self._coarse: dict[int, np.ndarray] = {}
-        self.preferred = 0
+        self.preferred: int | None = None  # the track whose coarse search worked last
+        self._by_level: list[int] | None = None
         self.status: Callable[[str], None] = lambda text: None  # what is being read now
 
     @classmethod
@@ -263,10 +269,21 @@ class References:
         return len(self.sources)
 
     def order(self) -> list[int]:
-        return [self.preferred] + [i for i in range(len(self)) if i != self.preferred]
+        """Tracks to try for the coarse search: the one that worked last, then the loudest
+        (room and ambience microphones; a quiet channel rarely shares much)."""
+        if self._by_level is None:
+            level = []
+            for src in self.sources:
+                rec = Recording.sampled(src, 16) if src.length else None
+                level.append(rec.mean_power if rec is not None else 0.0)
+            self._by_level = sorted(range(len(self)), key=lambda i: -level[i])
+        first = [self.preferred] if self.preferred is not None else []
+        return first + [i for i in self._by_level if i != self.preferred]
 
     def release(self) -> None:
         """Forget the coarse copies of all tracks but the preferred one."""
+        if len(self) == 1:
+            return
         for k in [k for k in self._coarse if k != self.preferred]:
             del self._coarse[k]
 
@@ -297,55 +314,138 @@ def align_best(
     return _align(References.from_arrays(refs, rate), Recording.from_array(other, rate))
 
 
+@dataclass(frozen=True)
+class FileResult:
+    """Where one file goes, and how that was found."""
+
+    reference: Path  # reference track it was measured against (itself for the reference)
+    alignment: Alignment
+    device: str
+    is_reference: bool = False  # on the reference's clock and start: offset 0, no drift
+    via: Path | None = None  # the parallel track its clip was measured through
+    drift_from: Path | None = None  # the sibling clip whose drift it took
+
+
 def align_files(
     ref_paths: Sequence[Path | str],
     paths: Sequence[Path | str],
     rate: int = ANALYSIS_RATE,
     progress: Callable[[str, int, int], None] | None = None,
-) -> list[tuple[int, Alignment]]:
-    """Align each file to the best of the reference tracks.
+    separate: bool = False,
+) -> list[FileResult]:
+    """Align each file to the reference, device by device (see chronon.devices): parallel
+    tracks are measured once through the one that matches best, clips too short or weak to
+    show their own drift take it from a sibling clip. ``separate`` measures every file on
+    its own. Results are in the order of ``paths``.
 
     Progress is reported in seconds of audio analysed, so time remaining can be
     estimated from it."""
     report = progress or (lambda what, done, total: None)
-    durations = [audio.probe(p).duration_s for p in paths]
+    devs = devices.group(ref_paths, paths, separate)
+    ref_tracks = devs[0].files
+    refs = References.from_files(ref_tracks, rate)
+    identity = Alignment(0.0, 0.0, 1.0, False, 1, 1)
+    out: dict[Path, FileResult] = {
+        t: FileResult(t, identity, devs[0].name, is_reference=True) for t in ref_tracks
+    }
+    clips = [(d, c) for d in devs[1:] for c in d.clips]
+    for _, c in clips:
+        c.tracks = _by_level(c.tracks, rate)
+    durations = [audio.probe(c.tracks[0]).duration_s for _, c in clips]
     total, done = round(sum(durations)), 0.0
-    refs = References.from_files(ref_paths, rate)
-    results = []
     current = {"name": "", "done": 0.0}
     refs.status = lambda text: report(
         f"analysing {current['name']} ({text})", round(current["done"]), total
     )
-    # the next file is decoded in the background while this one is analysed
+    # the next clip is decoded in the background while one is analysed
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="chronon-load") as loader:
-        upcoming = loader.submit(Recording.from_file, paths[0], rate) if paths else None
-        for k, (path, duration) in enumerate(zip(paths, durations, strict=True)):
-            current.update(name=Path(path).name, done=done)
-            report(f"analysing {Path(path).name}", round(done), total)
+        load = lambda k: loader.submit(Recording.from_file, clips[k][1].tracks[0], rate)  # noqa: E731
+        upcoming = load(0) if clips else None
+        for k, ((dev, clip), duration) in enumerate(zip(clips, durations, strict=True)):
+            name = clip.tracks[0].name
+            current.update(name=name, done=done)
+            report(f"analysing {name}", round(done), total)
             assert upcoming is not None
             rec = upcoming.result()
-            upcoming = (
-                loader.submit(Recording.from_file, paths[k + 1], rate)
-                if k + 1 < len(paths)
-                else None
-            )
+            upcoming = load(k + 1) if k + 1 < len(clips) else None
 
-            def stage(
-                frac: float,
-                base: float = done,
-                length: float = duration,
-                name: str = Path(path).name,
-            ) -> None:
-                report(f"analysing {name}", round(base + frac * length), total)
+            def stage(frac: float, base: float = done, length: float = duration, n: str = name):
+                report(f"analysing {n}", round(base + frac * length), total)
 
             try:
-                results.append(_align(refs, rec, stage))
+                index, a, lead = _align_clip(refs, clip.tracks, rec, rate, stage)
             except ValueError as e:
-                raise ValueError(f"{Path(path).name}: {e}") from None
+                raise ValueError(f"{name}: {e}") from None
+            via = lead if len(clip.tracks) > 1 else None
+            for t in clip.tracks:
+                out[t] = FileResult(ref_tracks[index], a, dev.name, via=via)
             del rec
             done += duration
+    for dev in devs[1:]:
+        _borrow_drift(dev, out)
     report("analysing", total, total)
-    return results
+    return [out[Path(p)] for p in paths]
+
+
+def _by_level(tracks: Sequence[Path], rate: int) -> list[Path]:
+    """Parallel tracks loudest first (from a few sampled windows): silent channels of a desk
+    are not worth a full measurement."""
+    if len(tracks) < 2:
+        return list(tracks)
+    level = {}
+    for t in tracks:
+        try:
+            src = audio.open_source(t, rate)
+        except (audio.AudioError, RuntimeError):
+            level[t] = 0.0
+            continue
+        level[t] = Recording.sampled(src, 16).mean_power if src.length else 0.0
+    return sorted(tracks, key=lambda t: -level[t])
+
+
+def _align_clip(
+    refs: References,
+    tracks: Sequence[Path],
+    first: Recording,
+    rate: int,
+    stage: Callable[[float], None],
+) -> tuple[int, Alignment, Path]:
+    """Measure a clip of one or more parallel tracks (loudest first; the first one loaded
+    with its coarse copy); return (reference index, alignment, the track measured)."""
+    if len(tracks) == 1:
+        index, a = _align(refs, first, stage)
+        return index, a, tracks[0]
+    recs = [first] + [
+        Recording._lazy(audio.open_source(t, rate), first.positions, first.win) for t in tracks[1:]
+    ]
+    index, a, j = _align(refs, recs, stage)
+    return index, a, tracks[j]
+
+
+def _borrow_drift(dev: devices.Device, out: dict[Path, FileResult]) -> None:
+    """A clip whose own drift is not trustworthy (unreliable, or its measurable part too
+    short) takes the drift of the nearest sibling clip that is, and its offset is refitted
+    to its own windows with that drift. Long clips keep their own drift: a clock's rate can
+    change over hours (the musical's Zoom: -8.2 then -11.2 ppm)."""
+    results = [out[c.tracks[0]] for c in dev.clips]
+
+    def strong(r: FileResult) -> bool:
+        a = r.alignment
+        return a.reliable and len(a.good_s) > 1 and np.ptp(a.good_s) >= BORROW_SPAN_S
+
+    donors = [k for k, r in enumerate(results) if strong(r)]
+    for k, (clip, r) in enumerate(zip(dev.clips, results, strict=True)):
+        if strong(r) or not donors or not r.alignment.good_s:
+            continue
+        donor = min(donors, key=lambda d: abs(d - k))
+        drift = results[donor].alignment.drift_ppm
+        slope = 1 / (1 + drift * 1e-6) - 1
+        t = np.array(r.alignment.good_s)
+        lag = np.array(r.alignment.good_lag)
+        offset = float(np.median(lag - slope * t))
+        a = replace(r.alignment, offset_s=offset, drift_ppm=drift)
+        for track in clip.tracks:
+            out[track] = replace(out[track], alignment=a, drift_from=dev.clips[donor].tracks[0])
 
 
 def check(
@@ -391,29 +491,51 @@ class _Anchor:
 
 
 def _align(
-    refs: References, rec: Recording, stage: Callable[[float], None] | None = None
-) -> tuple[int, Alignment]:
-    """``stage`` hears the share of this file's work that is done (0..1)."""
+    refs: References,
+    recs: Recording | Sequence[Recording],
+    stage: Callable[[float], None] | None = None,
+) -> tuple[int, Alignment] | tuple[int, Alignment, int]:
+    """Align a recording, or parallel tracks of one clip (the first one with its coarse
+    copy, the others reading their windows on the same grid), to the reference tracks.
+    Returns (reference index, alignment), plus the track index for several tracks.
+    ``stage`` hears the share of this clip's work that is done (0..1)."""
+    single = isinstance(recs, Recording)
+    tracks = [recs] if single else list(recs)
     stage = stage or (lambda frac: None)
-    anchor = _anchor(refs, rec)
+    anchor = _anchor(refs, tracks[0], tries=1 if len(tracks) > 1 else 0)
+    for k in range(1, min(len(tracks), LEAD_TRIES)):
+        if anchor.support >= min(2, anchor.tried):
+            break  # parallel tracks start together: one track's anchor holds for all
+        # another channel against the reference track that worked so far is cheaper and
+        # likelier to help than more reference tracks against a channel that hears nothing
+        _with_coarse(tracks[k])
+        other = _anchor(refs, tracks[k], tries=1)
+        if other.support > anchor.support:
+            anchor = other
     stage(0.15)
     narrow = anchor.slope is not None
-    result = _align_with(refs, rec, anchor, narrow, stage)
+    result = _align_with(refs, tracks, anchor, narrow, stage)
     if narrow and not result[1].reliable:
         # the coarse slope may have been misleading: search the full drift range
-        wide = _align_with(refs, rec, anchor, False, stage)
+        wide = _align_with(refs, tracks, anchor, False, stage)
         if _rank(wide[1]) > _rank(result[1]):
             result = wide
-    return result
+    return result[:2] if single else result
+
+
+def _with_coarse(rec: Recording) -> None:
+    if rec.coarse.size == 0 and isinstance(rec.source, audio.FileSource):
+        hint = int(rec.length * COARSE_RATE / rec.rate) + 1
+        rec.coarse = _collect(audio.stream_mono(rec.source.path, COARSE_RATE), hint)
 
 
 def _align_with(
     refs: References,
-    rec: Recording,
+    tracks: Sequence[Recording],
     anchor: _Anchor,
     narrow: bool,
     stage: Callable[[float], None],
-) -> tuple[int, Alignment]:
+) -> tuple[int, Alignment, int]:
     t0, lag0 = anchor.t0, anchor.lag0
     if narrow:
         slope = anchor.slope or 0.0
@@ -431,40 +553,42 @@ def _align_with(
         def margin_at(t):
             return COARSE_TOLERANCE_S + MAX_DRIFT_PPM * 1e-6 * abs(t - t0)
 
-    candidates = [0]
-    if len(refs) > 1:
-        # screening: few windows on every track, more on the finalists. A file with weak
-        # shared sound has only ~15 % of windows on the line, so one small sample would
-        # pick almost at random among similar tracks.
-        n = len(rec.positions)
-        first = np.unique(np.linspace(0, n - 1, min(SCREEN_WINDOWS, n)).astype(int))
-        both = np.unique(
-            np.linspace(0, n - 1, min(SCREEN_WINDOWS + SCREEN_WINDOWS_2, n)).astype(int)
-        )
+    pairs = [(i, j) for j in range(len(tracks)) for i in range(len(refs))]
+    candidates = pairs[:1]
+    if len(pairs) > 1:
+        # screening: few windows on every (reference track, track) pair, more on the
+        # finalists. A file with weak shared sound has only ~15 % of windows on the line,
+        # so one small sample would pick almost at random among similar tracks. Many pairs
+        # (a desk against a desk) start with fewer windows each.
+        lead = tracks[0]
+        n = len(lead.positions)
+        per_pair = SCREEN_WINDOWS if len(pairs) <= 18 else max(8, 864 // len(pairs))
+        first = np.unique(np.linspace(0, n - 1, min(per_pair, n)).astype(int))
+        both = np.unique(np.linspace(0, n - 1, min(per_pair + SCREEN_WINDOWS_2, n)).astype(int))
         more = np.setdiff1d(both, first)
-        found = {
-            i: _fine(src, rec, rec.positions[first], lag_at, margin_at)
-            for i, src in enumerate(refs.sources)
-        }
-        ranked = sorted(found, key=lambda i: _screen_score(found[i]), reverse=True)
-        clear = _screen_score(found[ranked[0]])[0] >= SCREEN_CLEAR
-        finalists = ranked[:SCREEN_FINALISTS] if clear else ranked
-        for i in finalists:
-            found[i] = found[i] + _fine(
-                refs.sources[i], rec, rec.positions[more], lag_at, margin_at
-            )
-        ranked = sorted(finalists, key=lambda i: _screen_score(found[i]), reverse=True)
+
+        def look(pair, idx):
+            i, j = pair
+            return _fine(refs.sources[i], tracks[j], lead.positions[idx], lag_at, margin_at)
+
+        found = {pair: look(pair, first) for pair in pairs}
+        ranked = sorted(found, key=lambda q: _screen_score(found[q]), reverse=True)
+        clear = _screen_score(found[ranked[0]])[0] >= min(SCREEN_CLEAR, len(first) // 4 + 1)
+        finalists = ranked[:SCREEN_FINALISTS] if clear else ranked[:SCREEN_UNCLEAR_MAX]
+        for pair in finalists:
+            found[pair] = found[pair] + look(pair, more)
+        ranked = sorted(finalists, key=lambda q: _screen_score(found[q]), reverse=True)
         candidates = ranked[:SCREEN_KEEP]
     stage(0.4)
-    best: tuple[int, Alignment] | None = None
-    for k, i in enumerate(candidates):
+    best: tuple[int, Alignment, int] | None = None
+    for k, (i, j) in enumerate(candidates):
         stage(0.4 + 0.6 * k / len(candidates))
         try:
-            a = _measure(refs.sources[i], rec, rec.positions, lag_at, margin_at)
+            a = _measure(refs.sources[i], tracks[j], tracks[j].positions, lag_at, margin_at)
         except ValueError:
             continue
         if best is None or _rank(a) > _rank(best[1]):
-            best = (i, a)
+            best = (i, a, j)
     if best is None:
         raise ValueError("the files do not seem to overlap")
     return best
@@ -482,10 +606,12 @@ def _rank(a: Alignment) -> tuple[bool, int, float]:
     return (a.reliable, a.windows_used, a.confidence)
 
 
-def _anchor(refs: References, rec: Recording) -> _Anchor:
-    """Coarse position: try reference tracks until one gives a clear answer."""
+def _anchor(refs: References, rec: Recording, tries: int = 0) -> _Anchor:
+    """Coarse position: try reference tracks (the one that worked last first, at most
+    ``tries`` or COARSE_REF_TRIES; each costs decoding a whole track) until one gives a
+    clear answer."""
     fallback = None
-    for i in refs.order():
+    for i in refs.order()[: tries or COARSE_REF_TRIES]:
         found = _coarse(refs.coarse(i), rec.coarse, COARSE_RATE)
         if found is None:
             continue
@@ -514,7 +640,9 @@ def _measure(
     t, lag, ncc = _arrays(matches)
     slope, intercept, inlier = _consensus(t, lag, np.abs(ncc))
     wander = _wander(t, lag - (intercept + slope * t))
-    first = _result(slope, intercept, ncc[inlier], len(matches), wander, good_s=t[inlier])
+    first = _result(
+        slope, intercept, ncc[inlier], len(matches), wander, good_s=t[inlier], good_lag=lag[inlier]
+    )
 
     stretch = 1 / (1 + first.drift_ppm * 1e-6)
     refined = _fine(
@@ -530,7 +658,14 @@ def _measure(
     t, lag, ncc = _arrays(refined)
     slope, intercept, _ = _consensus(t, lag, np.abs(ncc), initial=(slope, intercept))
     return _result(
-        slope, intercept, ncc, len(matches), wander, used=first.windows_used, good_s=first.good_s
+        slope,
+        intercept,
+        ncc,
+        len(matches),
+        wander,
+        used=first.windows_used,
+        good_s=first.good_s,
+        good_lag=first.good_lag,
     )
 
 
@@ -814,6 +949,7 @@ def _result(
     wander_ms: float,
     used: int | None = None,
     good_s: Sequence[float] = (),
+    good_lag: Sequence[float] = (),
 ) -> Alignment:
     used = len(inlier_ncc) if used is None else used
     return Alignment(
@@ -825,4 +961,5 @@ def _result(
         windows_total=total,
         wander_ms=wander_ms,
         good_s=tuple(float(x) for x in good_s),
+        good_lag=tuple(float(x) for x in good_lag),
     )

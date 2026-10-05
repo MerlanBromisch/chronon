@@ -34,7 +34,8 @@ These apply to every stage and decide trade-offs.
 - [x] FCPXML in Logic Pro: audio tracks and video as picture reference (confirmed 2026-10-05)
 
 ## Stage 2 — Robustness
-- [ ] Devices: group files sharing a clock (auto + manual), one drift per device
+- [x] Devices: parallel tracks measured once; numbered clips grouped; short clips borrow drift — automatic, `--separate` to switch off
+- [ ] Devices: manual grouping (CLI / app)
 - [ ] Many clips per source; chain clips that only overlap with other sources
 - [x] Confidence from window agreement; flag files without a reliable match
 - [ ] Resolve conflicting matches between files

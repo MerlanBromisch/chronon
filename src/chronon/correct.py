@@ -65,6 +65,8 @@ class Output:
     frames: int  # output frames including padding
     format: str
     has_video: bool = False
+    device: str = ""
+    via: str = ""  # parallel track whose measurement this file shares
     check_at_s: list[float] = field(default_factory=list)  # output times to verify at
     verify_offset_ms: float | None = None
     verify_drift_ppm: float | None = None
@@ -85,7 +87,7 @@ class CorrectError(ValueError):
     pass
 
 
-Entry = tuple[Path, int, align.Alignment, bool]  # (file, reference index, alignment, is_ref)
+Entry = tuple[Path, align.FileResult]
 
 
 def analyse(
@@ -93,19 +95,22 @@ def analyse(
     files: Sequence[Path],
     all_refs: bool = False,
     progress: Progress | None = None,
+    separate: bool = False,
 ) -> list[Entry]:
     """Align the files; return entries for the reference tracks to export and the files.
 
     Of several reference tracks only those some file matched best are exported (plus the
     first), unless ``all_refs``; all of them are still used to find the best match."""
     report = progress or (lambda what, done, total: None)
-    results = align.align_files(refs, files, progress=report)
-    used = {0} | {i for i, _ in results}
+    results = align.align_files(refs, files, progress=report, separate=separate)
+    used = {Path(refs[0])} | {r.reference for r in results}
     identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
     entries: list[Entry] = [
-        (r, i, identity, True) for i, r in enumerate(refs) if all_refs or i in used
+        (Path(r), align.FileResult(Path(r), identity, "reference", is_reference=True))
+        for r in refs
+        if (all_refs or Path(r) in used) and Path(r) not in {Path(f) for f in files}
     ]
-    entries += [(f, i, a, False) for f, (i, a) in zip(files, results, strict=True)]
+    entries += [(Path(f), r) for f, r in zip(files, results, strict=True)]
     return entries
 
 
@@ -120,13 +125,14 @@ def run(
     progress: Progress | None = None,
     all_refs: bool = False,
     name: str | None = None,
+    separate: bool = False,
 ) -> list[Output]:
     """Analyse, write, verify, write the timeline. Returns one Output per exported file."""
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
     _check_outdir(outdir, refs + files)
     report = progress or (lambda what, done, total: None)
-    entries = analyse(refs, files, all_refs, report)
-    outputs = plan(entries, refs, outdir, rate, pad, fmt, overwrite)
+    entries = analyse(refs, files, all_refs, report, separate)
+    outputs = plan(entries, outdir, rate, pad, fmt, overwrite)
     _check_space(outdir, outputs)
 
     outdir.mkdir(parents=True, exist_ok=True)
@@ -150,6 +156,8 @@ class Placement:
     confidence: float
     reliable: bool
     error_ms: float  # worst misplacement over the clip from remaining drift / frame rounding
+    device: str = ""
+    notes: list[str] = field(default_factory=list)
 
 
 def sync(
@@ -159,20 +167,31 @@ def sync(
     progress: Progress | None = None,
     all_refs: bool = False,
     name: str | None = None,
+    separate: bool = False,
 ) -> list[Placement]:
     """Analyse and write a timeline of the original files (nothing corrected)."""
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
     _check_outdir(outdir, refs + files)
-    entries = analyse(refs, files, all_refs, progress)
-    zero = min(0.0, *(a.offset_s for _, _, a, _ in entries))
-    items = [fcpxml.Item(f, a.offset_s - zero, a.drift_ppm) for f, _, a, _ in entries]
+    entries = analyse(refs, files, all_refs, progress, separate)
+    zero = min(0.0, *(r.alignment.offset_s for _, r in entries))
+    items = [
+        fcpxml.Item(f, r.alignment.offset_s - zero, r.alignment.drift_ppm, group=r.device)
+        for f, r in entries
+    ]
     outdir.mkdir(parents=True, exist_ok=True)
     placed = _write_timeline(items, outdir, name)
     result = [
         Placement(
-            str(f), a.offset_s - zero, a.drift_ppm, a.confidence, is_ref or a.reliable, p.error_ms
+            str(f),
+            r.alignment.offset_s - zero,
+            r.alignment.drift_ppm,
+            r.alignment.confidence,
+            r.is_reference or r.alignment.reliable,
+            p.error_ms,
+            r.device,
+            result_notes(r),
         )
-        for (f, _, a, is_ref), p in zip(entries, placed, strict=True)
+        for (f, r), p in zip(entries, placed, strict=True)
     ]
     (outdir / "chronon-sync.json").write_text(
         json.dumps([asdict(r) for r in result], indent=2) + "\n"
@@ -192,7 +211,12 @@ def timeline(outdir: Path | str, name: str | None = None) -> Path:
         )
     elif (outdir / "chronon-sync.json").exists():
         rows = json.loads((outdir / "chronon-sync.json").read_text())
-        items = [fcpxml.Item(Path(r["source"]), r["position_s"], r["drift_ppm"]) for r in rows]
+        items = [
+            fcpxml.Item(
+                Path(r["source"]), r["position_s"], r["drift_ppm"], group=r.get("device", "")
+            )
+            for r in rows
+        ]
     else:
         raise CorrectError(f"{outdir} holds no chronon-report.json or chronon-sync.json")
     _write_timeline(items, outdir, name)
@@ -204,8 +228,10 @@ def _corrected_items(outputs: Sequence[Output]) -> list[fcpxml.Item]:
     items = []
     for o in outputs:
         if o.has_video:
-            items.append(fcpxml.Item(Path(o.source), o.position_s, o.drift_ppm, video_only=True))
-        items.append(fcpxml.Item(Path(o.path), o.start_s))
+            items.append(
+                fcpxml.Item(Path(o.source), o.position_s, o.drift_ppm, True, group=o.device)
+            )
+        items.append(fcpxml.Item(Path(o.path), o.start_s, group=o.device))
     return items
 
 
@@ -214,9 +240,20 @@ def _write_timeline(items: list[fcpxml.Item], outdir: Path, name: str | None):
     return fcpxml.write(items, outdir / f"{name}.fcpxml", name)
 
 
+def result_notes(r: align.FileResult) -> list[str]:
+    """How a file's placement was found, for reports."""
+    notes = []
+    if r.is_reference:
+        notes.append("same clock and start as the reference")
+    if r.via is not None:
+        notes.append(f"measured via {r.via.name}")
+    if r.drift_from is not None:
+        notes.append(f"drift from {r.drift_from.name}")
+    return notes
+
+
 def plan(
     entries: Sequence[Entry],
-    refs: Sequence[Path],
     outdir: Path,
     rate: int,
     pad: bool,
@@ -226,10 +263,11 @@ def plan(
     """Where every file goes on the timeline and what gets written."""
     if fmt not in FORMATS:
         raise CorrectError(f"unknown format {fmt!r}, expected one of {FORMATS}")
-    zero = min(0.0, *(a.offset_s for _, _, a, _ in entries))
+    zero = min(0.0, *(r.alignment.offset_s for _, r in entries))
     names = _output_names([e[0] for e in entries])
     outputs = []
-    for (src, ref_index, a, is_ref), name in zip(entries, names, strict=True):
+    for (src, r), name in zip(entries, names, strict=True):
+        a, is_ref = r.alignment, r.is_reference
         info = audio.probe(src)
         position = a.offset_s - zero
         pad_frames = round(position * rate) if pad else 0
@@ -238,7 +276,7 @@ def plan(
         out = Output(
             source=str(src),
             path="",
-            reference=str(refs[ref_index]),
+            reference=str(r.reference),
             is_reference=is_ref,
             position_s=position,
             offset_s=a.offset_s,
@@ -255,6 +293,9 @@ def plan(
             format="wav",
         )
         out.has_video = info.has_video
+        out.device = r.device
+        out.via = str(r.via) if r.via is not None else ""
+        out.notes.extend(result_notes(r))
         # where the analysis could measure this file, in output file time
         lead = out.position_s - out.start_s
         out.check_at_s = [lead + t / (1 + a.drift_ppm * 1e-6) for t in a.good_s]
@@ -338,7 +379,8 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
     CHECK_WINDOWS windows spread over the file (excerpts only, nothing loaded whole)."""
     report = progress or (lambda what, done, total: None)
     by_source = {o.source: o for o in outputs}
-    todo = [o for o in outputs if not o.is_reference]
+    # parallel tracks share one correction: check the track it was measured through
+    todo = [o for o in outputs if not o.is_reference and (not o.via or o.via == o.source)]
     for k, out in enumerate(todo):
         report("verifying", k, len(todo))
         ref = by_source[out.reference]
@@ -365,6 +407,13 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
         )
         if not out.verified:
             out.notes.append("VERIFICATION FAILED: output is not in sync with the reference")
+    for o in outputs:
+        lead = by_source.get(o.via)
+        if o.via and o.via != o.source and lead is not None:
+            o.verified = lead.verified
+            o.verify_offset_ms, o.verify_drift_ppm = lead.verify_offset_ms, lead.verify_drift_ppm
+            if lead.verified is False:
+                o.notes.append("VERIFICATION FAILED (via its parallel track)")
     report("verifying", len(todo), len(todo))
 
 
