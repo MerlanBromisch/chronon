@@ -13,7 +13,12 @@ Placement rules:
 - A video whose audio was corrected into its own file plays only its picture
   (``srcEnable="video"``); the corrected file plays below it.
 - Asset ``start`` is the media's own time origin as Final Cut reads it: the camera
-  timecode, or the BWF time stamp of a recorder file.
+  timecode, or the BWF time stamp of a recorder file. Only a standard timecode track
+  (``tmcd``) counts: Sony XAVC S stores its timecode in a ``rtmd`` metadata track that
+  Final Cut ignores for a bare MP4 (media start 0), and a mismatch makes the clip point
+  at media that does not exist.
+- A corrected audio file named like its video (C2378.MP4 / C2378.wav) is called
+  "C2378 audio" so the two can be told apart.
 """
 
 from __future__ import annotations
@@ -103,8 +108,8 @@ def render(placed: list[Placed], name: str) -> str:
         if key not in formats:
             formats[key] = f"r{len(formats) + 1}"
             res.append(
-                f'    <format id="{formats[key]}" frameDuration="{_t(fd)}" '
-                f'width="{w}" height="{h}"/>'
+                f'    <format id="{formats[key]}" name="{format_name(fd, w, h)}" '
+                f'frameDuration="{_t(fd)}" width="{w}" height="{h}"/>'
             )
         return formats[key]
 
@@ -112,11 +117,15 @@ def render(placed: list[Placed], name: str) -> str:
     seq_fmt = fmt_id(
         frame, seq_video.width if seq_video else 1920, seq_video.height if seq_video else 1080
     )
+    video_stems = {p.item.path.stem for p in placed if p.media.has_video}
     for k, p in enumerate(placed):
         m, aid = p.media, f"a{k + 1}"
+        label = p.item.path.stem
+        if not m.has_video and label in video_stems:
+            label += " audio"
         attrs = {
             "id": aid,
-            "name": p.item.path.stem,
+            "name": label,
             "start": _t(m.start),
             "duration": _t(m.duration),
         }
@@ -142,7 +151,7 @@ def render(placed: list[Placed], name: str) -> str:
             "ref": aid,
             "lane": str(p.lane),
             "offset": _t(p.offset),
-            "name": p.item.path.stem,
+            "name": label,
             "start": _t(p.start),
             "duration": _t(p.duration),
         }
@@ -251,14 +260,7 @@ def probe(path: Path | str) -> Media:
     if video:
         num, den = (int(x) for x in video.get("r_frame_rate", "25/1").split("/"))
         frame = Fraction(den, num)
-        tc = fmt_tags.get("timecode") or next(
-            (
-                s.get("tags", {}).get("timecode")
-                for s in streams
-                if s.get("tags", {}).get("timecode")
-            ),
-            None,
-        )
+        tc = _timecode_tag(streams, fmt_tags)
         if tc:
             start = _timecode(tc, frame)
         nb = int(video.get("nb_frames") or 0)
@@ -279,6 +281,25 @@ def probe(path: Path | str) -> Media:
         width=int(video.get("width", 0)) if video else 0,
         height=int(video.get("height", 0)) if video else 0,
     )
+
+
+def _timecode_tag(streams: list[dict], fmt_tags: dict) -> str | None:
+    """The timecode Final Cut reads: from a standard ``tmcd`` track only."""
+    for s in streams:
+        if s.get("codec_tag_string") == "tmcd" and s.get("tags", {}).get("timecode"):
+            return s["tags"]["timecode"]
+    if any(s.get("codec_tag_string") == "tmcd" for s in streams):
+        return fmt_tags.get("timecode")
+    return None
+
+
+def format_name(frame: Fraction, width: int, height: int) -> str:
+    """Final Cut's name for a video format, e.g. FFVideoFormat1080p25,
+    FFVideoFormat3840x2160p25, FFVideoFormat1080p2997."""
+    rate = 1 / frame
+    fps = str(int(rate)) if rate.denominator == 1 else f"{float(rate):.2f}".replace(".", "")
+    size = f"{height}" if (width, height) in ((1920, 1080), (1280, 720)) else f"{width}x{height}"
+    return f"FFVideoFormat{size}p{fps}"
 
 
 def _timecode(tc: str, frame: Fraction) -> Fraction:

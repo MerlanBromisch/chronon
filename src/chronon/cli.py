@@ -61,6 +61,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--overwrite", action="store_true", help="replace existing output files")
     p.add_argument("--name", help="project name (default: the output folder's name)")
 
+    p = commands.add_parser(
+        "timeline", help="rebuild the .fcpxml of an earlier sync/correct run from its report"
+    )
+    p.add_argument("outdir", help="output folder of the earlier run")
+    p.add_argument("--name", help="project name (default: the folder's name)")
+
     p = commands.add_parser("eval", help="run analyze on a 'chronon synth' folder and compare")
     p.add_argument("scene", help="folder written by 'chronon synth'")
 
@@ -74,6 +80,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _sync(args)
         if args.command == "correct":
             return _correct(args)
+        if args.command == "timeline":
+            print(f"timeline: {correct.timeline(args.outdir, args.name)}")
+            return 0
         if args.command == "eval":
             return _eval(args)
     except (audio.AudioError, ValueError) as e:

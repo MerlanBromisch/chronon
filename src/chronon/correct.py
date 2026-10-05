@@ -133,12 +133,7 @@ def run(
         write(out, lambda done, total, label=label: report(label, done, total))
 
     verify(outputs, report)
-    items = []
-    for o in outputs:
-        if o.has_video:
-            items.append(fcpxml.Item(Path(o.source), o.position_s, o.drift_ppm, video_only=True))
-        items.append(fcpxml.Item(Path(o.path), o.start_s))
-    placed = fcpxml.write(items, outdir / f"{name or outdir.name}.fcpxml", name or outdir.name)
+    placed = _write_timeline(_corrected_items(outputs), outdir, name)
     for p in placed:
         if p.media.has_video:
             out = next(o for o in outputs if o.source == str(p.item.path))
@@ -172,7 +167,7 @@ def sync(
     zero = min(0.0, *(a.offset_s for _, _, a, _ in entries))
     items = [fcpxml.Item(f, a.offset_s - zero, a.drift_ppm) for f, _, a, _ in entries]
     outdir.mkdir(parents=True, exist_ok=True)
-    placed = fcpxml.write(items, outdir / f"{name or outdir.name}.fcpxml", name or outdir.name)
+    placed = _write_timeline(items, outdir, name)
     result = [
         Placement(
             str(f), a.offset_s - zero, a.drift_ppm, a.confidence, is_ref or a.reliable, p.error_ms
@@ -183,6 +178,40 @@ def sync(
         json.dumps([asdict(r) for r in result], indent=2) + "\n"
     )
     return result
+
+
+def timeline(outdir: Path | str, name: str | None = None) -> Path:
+    """Rebuild the .fcpxml of an earlier ``correct`` or ``sync`` run from its report,
+    without analysing or writing audio again."""
+    outdir = Path(outdir)
+    if (outdir / "chronon-report.json").exists():
+        rows = json.loads((outdir / "chronon-report.json").read_text())
+        fields = {f for f in Output.__dataclass_fields__}
+        items = _corrected_items(
+            [Output(**{k: v for k, v in r.items() if k in fields}) for r in rows]
+        )
+    elif (outdir / "chronon-sync.json").exists():
+        rows = json.loads((outdir / "chronon-sync.json").read_text())
+        items = [fcpxml.Item(Path(r["source"]), r["position_s"], r["drift_ppm"]) for r in rows]
+    else:
+        raise CorrectError(f"{outdir} holds no chronon-report.json or chronon-sync.json")
+    _write_timeline(items, outdir, name)
+    return outdir / f"{name or outdir.name}.fcpxml"
+
+
+def _corrected_items(outputs: Sequence[Output]) -> list[fcpxml.Item]:
+    """Video originals (picture only) plus every corrected audio file."""
+    items = []
+    for o in outputs:
+        if o.has_video:
+            items.append(fcpxml.Item(Path(o.source), o.position_s, o.drift_ppm, video_only=True))
+        items.append(fcpxml.Item(Path(o.path), o.start_s))
+    return items
+
+
+def _write_timeline(items: list[fcpxml.Item], outdir: Path, name: str | None):
+    name = name or outdir.name
+    return fcpxml.write(items, outdir / f"{name}.fcpxml", name)
 
 
 def plan(

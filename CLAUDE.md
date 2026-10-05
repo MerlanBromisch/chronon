@@ -10,6 +10,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `uv run chronon eval OUTDIR` — run the aligner on a synth folder and print errors against truth
 - `uv run chronon analyze REF FILE...` — offset/drift of files against a reference
 - `uv run chronon sync [-r TRACK]... FILE... -o OUTDIR` — FCPXML of the originals (nothing corrected)
+- `uv run chronon timeline OUTDIR` — rebuild the .fcpxml of an earlier sync/correct run from its report (seconds)
 - `uv run chronon correct [-r TRACK]... FILE... -o OUTDIR` — write drift/rate-corrected, padded audio + report, then verify
 - `uv run chronon analyze -r TRACK -r TRACK ... FILE...` — several sample-parallel reference tracks (one desk); each file uses its best match
 
@@ -39,6 +40,10 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
   - Which track of a multitrack desk is the reference matters more than anything else.
   - Some clocks (battery recorders) wander by ±2 ms over hours — not a straight line.
   - A multi-source effect must first be reproduced in `chronon.synth` (see `test_room_*`).
+- Final Cut import (tested 2026-10-05): asset `start` must equal what FCP reads as media start.
+  Sony XAVC S MP4 keeps its timecode only in an `rtmd` track that FCP ignores (media start 0);
+  only `tmcd` timecode counts. Formats need FCP's name (`FFVideoFormat3840x2160p25`).
+- Files for the user to open go to `~/Documents/Chronon Test/`, never to `/private/tmp`.
 - Never commit media files (see `.gitignore`); generate them with `chronon synth`.
 - Never modify the user's original media; outputs go to a separate folder (enforced in `correct`).
 - Export design decisions: `docs/export.md`.

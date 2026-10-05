@@ -153,3 +153,44 @@ def test_correct_mutes_camera_audio_and_uses_the_corrected_file(tmp_path):
     srcs = {r.get("src") for r in root.iter("media-rep")}
     assert (tmp_path / "out" / "cam.wav").resolve().as_uri() in srcs
     assert video.resolve().as_uri() in srcs
+
+
+def test_format_names_match_final_cut():
+    assert fcpxml.format_name(FRAME, 3840, 2160) == "FFVideoFormat3840x2160p25"
+    assert fcpxml.format_name(FRAME, 1920, 1080) == "FFVideoFormat1080p25"
+    assert fcpxml.format_name(Fraction(1001, 30000), 1920, 1080) == "FFVideoFormat1080p2997"
+
+
+def test_only_a_standard_timecode_track_counts():
+    # Sony XAVC S: timecode only in its 'rtmd' metadata track, which Final Cut ignores
+    sony = [
+        {"codec_tag_string": "avc1"},
+        {"codec_tag_string": "rtmd", "tags": {"timecode": "14:49:07:04"}},
+    ]
+    assert fcpxml._timecode_tag(sony, {}) is None
+    other = [
+        {"codec_tag_string": "hvc1"},
+        {"codec_tag_string": "tmcd", "tags": {"timecode": "07:39:37:10"}},
+    ]
+    assert fcpxml._timecode_tag(other, {"timecode": "07:39:37:10"}) == "07:39:37:10"
+
+
+def test_corrected_audio_is_named_apart_from_its_video(tmp_path):
+    rec, video = _scene(tmp_path)
+    correct.run([rec], [video], tmp_path / "out", name="t")
+    names = set(_clips(tmp_path / "out" / "t.fcpxml"))
+    assert {"cam", "cam audio", "rec_01"} <= names
+
+
+def test_timeline_is_rebuilt_from_the_report(tmp_path):
+    rec, video = _scene(tmp_path)
+    correct.run([rec], [video], tmp_path / "out", name="t")
+    first = (tmp_path / "out" / "t.fcpxml").read_text()
+    (tmp_path / "out" / "t.fcpxml").unlink()
+    assert correct.timeline(tmp_path / "out", "t") == tmp_path / "out" / "t.fcpxml"
+    assert (tmp_path / "out" / "t.fcpxml").read_text() == first
+
+    correct.sync([rec], [video], tmp_path / "sync", name="s")
+    first = (tmp_path / "sync" / "s.fcpxml").read_text()
+    correct.timeline(tmp_path / "sync", "s")
+    assert (tmp_path / "sync" / "s.fcpxml").read_text() == first

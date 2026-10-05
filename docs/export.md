@@ -72,7 +72,7 @@ recorder model) and the user can correct the grouping.
 
 ## Open points
 
-- **CAF in Final Cut** — test. (Logic: verified 2026-09-25 with the musical — padded WAV and
+- **CAF in Final Cut** — imports (2026-10-05). (Logic: verified 2026-09-25 with the musical — padded WAV and
   CAF outputs dropped at 0 line up, including the 4 h Zoom CAF.)
 - **BWF time stamp placement in Logic** for unpadded files — test.
 - **Video in Logic** — whether Logic's FCPXML import places the movie, or Chronon must state
