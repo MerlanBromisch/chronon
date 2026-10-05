@@ -27,7 +27,8 @@ These apply to every stage and decide trade-offs.
 - [ ] BWF time stamp in unpadded files; join clips per device
 - [ ] Selectable time reference
 - [x] FCPXML export — `chronon sync` (originals) and `chronon correct` (corrected audio); DTD-valid
-- [x] FCPXML imports in Final Cut Pro with real material (musical, 2 cameras, Zoom, 2 desks)
+- [x] FCPXML imports in Final Cut Pro without warnings, picture and sound in sync (musical: 2 cameras,
+  Zoom, 2 desks; confirmed 2026-10-05)
 - [ ] FCPXML in Logic Pro (video as picture reference)
 
 ## Stage 2 — Robustness
