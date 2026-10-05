@@ -68,6 +68,10 @@ clip is centred so the error at its ends is halved):
 uv run chronon sync -r desk/ch18.wav zoom.wav camera.mp4 -o ~/Desktop/timeline
 ```
 
+`--no-pad` writes files that start with their own audio; every WAV carries a BWF time stamp
+(timeline zero = 01:00:00:00) so Logic can move it to its recorded position. `--join` writes one
+file per device (e.g. both halves of a Zoom take), gaps filled with silence.
+
 With several `-r` tracks only those some file matched best are exported (`--all-refs` for all).
 Files are grouped into devices automatically (`--separate` to switch off): parallel tracks
 of one recording (desk channels, a recorder's inputs) are measured once and corrected alike, so

@@ -194,3 +194,31 @@ def test_timeline_is_rebuilt_from_the_report(tmp_path):
     first = (tmp_path / "sync" / "s.fcpxml").read_text()
     correct.timeline(tmp_path / "sync", "s")
     assert (tmp_path / "sync" / "s.fcpxml").read_text() == first
+
+
+def test_joined_camera_audio_keeps_every_video_clip(tmp_path):
+    rec, video = _scene(tmp_path)
+    second = video.with_name("cam2.mov")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-ss",
+            "2",
+            "-i",
+            str(video),
+            "-c",
+            "copy",
+            "-timecode",
+            "02:00:00:00",
+            str(second),
+        ],
+        check=True,
+    )
+    outputs = correct.run([rec], [video, second], tmp_path / "out", join=True, name="t")
+    root = ET.parse(tmp_path / "out" / "t.fcpxml").getroot()
+    videos = [c for c in root.iter("asset-clip") if c.get("srcEnable") == "video"]
+    assert sorted(c.get("name") for c in videos) == ["cam", "cam2"]
+    joined = next(o for o in outputs if len(o.segments) == 2)
+    assert sum("video placed" in n for n in joined.notes) == 2

@@ -38,11 +38,30 @@ CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fai
 # so a tighter bound would fail correct files. Correction bugs show up as drift.
 VERIFY_OFFSET_TOL_S = 5e-4
 VERIFY_DRIFT_TOL_PPM = 0.2
-FORMATS = ("auto", "wav", "caf")
+FORMATS = ("auto", "wav", "caf", "rf64")
 BLOCK_FRAMES = 1 << 16
+# BWF time stamps count from 01:00:00:00, where a Logic project starts by default: timeline
+# zero lands on the project start ("move region to recorded position")
+BWF_ORIGIN_S = 3600.0
+BWF_FORMATS = ("wav", "rf64")
 WRITE_THREADS = min(4, os.cpu_count() or 1)
 
 Progress = Callable[[str, int, int], None]  # (what, done, total) in real work units
+
+
+@dataclass
+class Segment:
+    """One source in an output file: resampled from its real rate, starting at
+    ``start_frame`` of the output (several segments when the clips of a device are joined)."""
+
+    source: str
+    position_s: float  # timeline time of the source's first sample
+    drift_ppm: float
+    in_rate: int
+    in_frames: int
+    start_frame: int
+    out_frames: int
+    has_video: bool = False
 
 
 @dataclass
@@ -68,6 +87,7 @@ class Output:
     device: str = ""
     via: str = ""  # parallel track whose measurement this file shares
     check_at_s: list[float] = field(default_factory=list)  # output times to verify at
+    segments: list[Segment] = field(default_factory=list)
     verify_offset_ms: float | None = None
     verify_drift_ppm: float | None = None
     verified: bool | None = None
@@ -126,13 +146,15 @@ def run(
     all_refs: bool = False,
     name: str | None = None,
     separate: bool = False,
+    join: bool = False,
 ) -> list[Output]:
-    """Analyse, write, verify, write the timeline. Returns one Output per exported file."""
+    """Analyse, write, verify, write the timeline. Returns one Output per exported file
+    (per device for joined clips)."""
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
     _check_outdir(outdir, refs + files)
     report = progress or (lambda what, done, total: None)
     entries = analyse(refs, files, all_refs, report, separate)
-    outputs = plan(entries, outdir, rate, pad, fmt, overwrite)
+    outputs = plan(entries, outdir, rate, pad, fmt, overwrite, join)
     _check_space(outdir, outputs)
 
     outdir.mkdir(parents=True, exist_ok=True)
@@ -142,8 +164,9 @@ def run(
     placed = _write_timeline(_corrected_items(outputs), outdir, name)
     for p in placed:
         if p.media.has_video:
-            out = next(o for o in outputs if o.source == str(p.item.path))
-            out.notes.append(f"video placed within ±{p.error_ms:.0f} ms")
+            out = next(o for o in outputs if str(p.item.path) in {g.source for g in o.segments})
+            label = f"{p.item.path.name}: " if len(out.segments) > 1 else ""
+            out.notes.append(f"{label}video placed within ±{p.error_ms:.0f} ms")
     write_report(outputs, outdir)
     return outputs
 
@@ -205,10 +228,7 @@ def timeline(outdir: Path | str, name: str | None = None) -> Path:
     outdir = Path(outdir)
     if (outdir / "chronon-report.json").exists():
         rows = json.loads((outdir / "chronon-report.json").read_text())
-        fields = {f for f in Output.__dataclass_fields__}
-        items = _corrected_items(
-            [Output(**{k: v for k, v in r.items() if k in fields}) for r in rows]
-        )
+        items = _corrected_items([_output_from_row(r) for r in rows])
     elif (outdir / "chronon-sync.json").exists():
         rows = json.loads((outdir / "chronon-sync.json").read_text())
         items = [
@@ -223,14 +243,22 @@ def timeline(outdir: Path | str, name: str | None = None) -> Path:
     return outdir / f"{name or outdir.name}.fcpxml"
 
 
+def _output_from_row(row: dict) -> Output:
+    fields = set(Output.__dataclass_fields__)
+    out = Output(**{k: v for k, v in row.items() if k in fields and k != "segments"})
+    out.segments = [Segment(**seg) for seg in row.get("segments", [])]
+    return out
+
+
 def _corrected_items(outputs: Sequence[Output]) -> list[fcpxml.Item]:
     """Video originals (picture only) plus every corrected audio file."""
     items = []
     for o in outputs:
-        if o.has_video:
-            items.append(
-                fcpxml.Item(Path(o.source), o.position_s, o.drift_ppm, True, group=o.device)
-            )
+        for seg in o.segments or [_single_segment(o)]:
+            if seg.has_video:
+                items.append(
+                    fcpxml.Item(Path(seg.source), seg.position_s, seg.drift_ppm, True, o.device)
+                )
         items.append(fcpxml.Item(Path(o.path), o.start_s, group=o.device))
     return items
 
@@ -259,96 +287,176 @@ def plan(
     pad: bool,
     fmt: str,
     overwrite: bool,
+    join: bool = False,
 ) -> list[Output]:
-    """Where every file goes on the timeline and what gets written."""
+    """Where every file goes on the timeline and what gets written. With ``join`` the clips
+    of a device (not parallel tracks) become one file, gaps filled with silence."""
     if fmt not in FORMATS:
         raise CorrectError(f"unknown format {fmt!r}, expected one of {FORMATS}")
     zero = min(0.0, *(r.alignment.offset_s for _, r in entries))
-    names = _output_names([e[0] for e in entries])
+    groups: list[list[Entry]] = []
+    by_device: dict[str, list[Entry]] = {}
+    for e in entries:
+        r = e[1]
+        joinable = join and not r.is_reference and r.via is None
+        if joinable and r.device in by_device:
+            by_device[r.device].append(e)
+            continue
+        groups.append([e])
+        if joinable:
+            by_device[r.device] = groups[-1]
+    names = _output_names([g[0][0] for g in groups])
+    names = [g[0][1].device if len(g) > 1 else n for g, n in zip(groups, names, strict=True)]
     outputs = []
-    for (src, r), name in zip(entries, names, strict=True):
-        a, is_ref = r.alignment, r.is_reference
-        info = audio.probe(src)
-        position = a.offset_s - zero
-        pad_frames = round(position * rate) if pad else 0
-        real_rate = info.sample_rate * (1 + a.drift_ppm * 1e-6)
-        frames = pad_frames + round(info.frames * rate / real_rate)
-        out = Output(
-            source=str(src),
-            path="",
-            reference=str(r.reference),
-            is_reference=is_ref,
-            position_s=position,
-            offset_s=a.offset_s,
-            drift_ppm=a.drift_ppm,
-            confidence=a.confidence,
-            reliable=a.reliable,
-            in_rate=info.sample_rate,
-            out_rate=rate,
-            channels=info.channels,
-            bits=info.bits,
-            padded=pad,
-            pad_frames=pad_frames,
-            frames=frames,
-            format="wav",
-        )
-        out.has_video = info.has_video
-        out.device = r.device
-        out.via = str(r.via) if r.via is not None else ""
-        out.notes.extend(result_notes(r))
-        # where the analysis could measure this file, in output file time
-        lead = out.position_s - out.start_s
-        out.check_at_s = [lead + t / (1 + a.drift_ppm * 1e-6) for t in a.good_s]
-        out.format = fmt if fmt != "auto" else ("caf" if out.bytes > CAF_ABOVE_BYTES else "wav")
-        if fmt == "auto" and out.format == "caf":
-            out.notes.append("written as CAF: over 2 GiB")
-        if fmt == "wav" and out.bytes >= 2**32:
-            raise CorrectError(f"{src.name}: {out.bytes / 2**30:.1f} GiB is too large for WAV")
-        if not is_ref and not a.reliable:
-            out.notes.append("NO RELIABLE MATCH: position and drift may be wrong")
-        if info.has_video:
-            out.notes.append("audio of a video file; the video itself is not changed")
-        path = outdir / f"{name}.{out.format}"
-        if path.exists() and not overwrite:
-            raise CorrectError(f"{path} exists (use --overwrite)")
-        out.path = str(path)
-        outputs.append(out)
+    for group, name in zip(groups, names, strict=True):
+        outputs.append(_plan_output(group, name, zero, outdir, rate, pad, fmt, overwrite))
     return outputs
 
 
+def _plan_output(
+    group: list[Entry],
+    name: str,
+    zero: float,
+    outdir: Path,
+    rate: int,
+    pad: bool,
+    fmt: str,
+    overwrite: bool,
+) -> Output:
+    group = sorted(group, key=lambda e: e[1].alignment.offset_s)
+    src, r = group[0]
+    a, is_ref = r.alignment, r.is_reference
+    base = a.offset_s - zero
+    pad_frames = round(base * rate) if pad else 0
+    segments, infos, check_at = [], [], []
+    for path, res in group:
+        info = audio.probe(path)
+        infos.append(info)
+        position = res.alignment.offset_s - zero
+        real_rate = info.sample_rate * (1 + res.alignment.drift_ppm * 1e-6)
+        start = pad_frames + round((position - base) * rate)
+        seg = Segment(
+            str(path),
+            position,
+            res.alignment.drift_ppm,
+            info.sample_rate,
+            info.frames,
+            start,
+            round(info.frames * rate / real_rate),
+            info.has_video,
+        )
+        segments.append(seg)
+        # where the analysis could measure this clip, in output file time
+        lead = start / rate
+        scale = 1 + res.alignment.drift_ppm * 1e-6
+        check_at += [lead + t / scale for t in res.alignment.good_s]
+    info = infos[0]
+    out = Output(
+        source=str(src),
+        path="",
+        reference=str(r.reference),
+        is_reference=is_ref,
+        position_s=base,
+        offset_s=a.offset_s,
+        drift_ppm=a.drift_ppm,
+        confidence=a.confidence,
+        reliable=a.reliable,
+        in_rate=info.sample_rate,
+        out_rate=rate,
+        channels=info.channels,
+        bits=info.bits,
+        padded=pad,
+        pad_frames=pad_frames,
+        frames=max(seg.start_frame + seg.out_frames for seg in segments),
+        format="wav",
+        segments=segments,
+        check_at_s=check_at,
+    )
+    out.has_video = any(i.has_video for i in infos)
+    out.device = r.device
+    out.via = str(r.via) if r.via is not None else ""
+    for _, res in group:
+        out.notes.extend(n for n in result_notes(res) if n not in out.notes)
+    if len(group) > 1:
+        out.notes.append("joined: " + ", ".join(Path(p).name for p, _ in group))
+    if fmt != "auto":
+        out.format = fmt
+    elif out.bytes <= CAF_ABOVE_BYTES:
+        out.format = "wav"
+    else:
+        # over 2 GiB: CAF, or RF64 (WAV without the size limit) where the BWF time stamp is
+        # needed to place an unpadded file
+        out.format = "caf" if pad else "rf64"
+        out.notes.append(f"written as {out.format.upper()}: over 2 GiB")
+    if out.format not in BWF_FORMATS and not pad:
+        out.notes.append("no time stamp in CAF: place it from the timeline file")
+    if fmt == "wav" and out.bytes >= 2**32:
+        raise CorrectError(f"{src.name}: {out.bytes / 2**30:.1f} GiB is too large for WAV")
+    if not is_ref and not all(res.alignment.reliable for _, res in group):
+        out.notes.append("NO RELIABLE MATCH: position and drift may be wrong")
+    if out.has_video:
+        out.notes.append("audio of a video file; the video itself is not changed")
+    path = outdir / f"{name}.{'wav' if out.format == 'rf64' else out.format}"
+    if path.exists() and not overwrite:
+        raise CorrectError(f"{path} exists (use --overwrite)")
+    out.path = str(path)
+    return out
+
+
 def write(out: Output, progress: Callable[[int, int], None] | None = None) -> None:
-    """Stream the source through the resampler into the output file."""
+    """Stream each segment's source through the resampler into the output file, silence
+    before and between segments. WAV / RF64 get a BWF time stamp: the output's timeline
+    position counted from BWF_ORIGIN_S."""
     report = progress or (lambda done, total: None)
     subtype = {16: "PCM_16", 24: "PCM_24", 32: "FLOAT"}[out.bits]
-    real_rate = out.in_rate * (1 + out.drift_ppm * 1e-6)
-    same = out.in_rate == out.out_rate and out.drift_ppm == 0.0
-    resampler = (
-        None
-        if same
-        else soxr.ResampleStream(
-            real_rate, out.out_rate, out.channels, dtype="float32", quality="VHQ"
-        )
-    )
+    segments = out.segments or [_single_segment(out)]
     done = 0
     with sf.SoundFile(
         out.path, "w", out.out_rate, out.channels, subtype, format=out.format.upper()
     ) as f:
+        if out.format in BWF_FORMATS:
+            audio.set_bwf(f, round((BWF_ORIGIN_S + out.start_s) * out.out_rate), out.out_rate)
         silence = np.zeros((BLOCK_FRAMES, out.channels), dtype=np.float32)
-        for start in range(0, out.pad_frames, BLOCK_FRAMES):
-            n = min(BLOCK_FRAMES, out.pad_frames - start)
-            f.write(silence[:n])
-            done += n
-            report(done, out.frames)
-        blocks = audio.stream(out.source, out.channels, BLOCK_FRAMES)
-        for block in _with_last(blocks):
-            data, last = block
-            if resampler is not None:
-                data = resampler.resample_chunk(data, last=last)
-            if len(data):
-                f.write(np.clip(data, -1.0, 1.0))
-                done += len(data)
-                report(min(done, out.frames), out.frames)
+        for seg in segments:
+            while done < seg.start_frame:
+                n = min(BLOCK_FRAMES, seg.start_frame - done)
+                f.write(silence[:n])
+                done += n
+                report(done, out.frames)
+            skip = done - seg.start_frame  # overlap with the previous segment: keep that one
+            real_rate = seg.in_rate * (1 + seg.drift_ppm * 1e-6)
+            resampler = None
+            if not (seg.in_rate == out.out_rate and seg.drift_ppm == 0.0):
+                resampler = soxr.ResampleStream(
+                    real_rate, out.out_rate, out.channels, dtype="float32", quality="VHQ"
+                )
+            for data, last in _with_last(audio.stream(seg.source, out.channels, BLOCK_FRAMES)):
+                if resampler is not None:
+                    data = resampler.resample_chunk(data, last=last)
+                if skip:
+                    cut = min(skip, len(data))
+                    data, skip = data[cut:], skip - cut
+                if len(data):
+                    f.write(np.clip(data, -1.0, 1.0))
+                    done += len(data)
+                    report(min(done, out.frames), out.frames)
     out.frames = done
+
+
+def _single_segment(out: Output) -> Segment:
+    """Reports written before segments existed describe one source."""
+    real_rate = out.in_rate * (1 + out.drift_ppm * 1e-6)
+    frames = round((out.frames - out.pad_frames) * real_rate / out.out_rate)
+    return Segment(
+        out.source,
+        out.position_s,
+        out.drift_ppm,
+        out.in_rate,
+        frames,
+        out.pad_frames,
+        out.frames - out.pad_frames,
+        out.has_video,
+    )
 
 
 def write_all(outputs: Sequence[Output], progress: Progress | None = None) -> None:
