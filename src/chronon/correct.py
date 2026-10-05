@@ -278,6 +278,8 @@ def result_notes(r: align.FileResult) -> list[str]:
         notes.append(f"measured via {r.via.name}")
     if r.drift_from is not None:
         notes.append(f"drift from {r.drift_from.name}")
+    if r.linked_via is not None:
+        notes.append(f"linked via {r.linked_via.name} (no reliable overlap with the reference)")
     return notes
 
 
@@ -491,7 +493,11 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
     """Measure every written file against its reference track's output again, at
     CHECK_WINDOWS windows spread over the file (excerpts only, nothing loaded whole)."""
     report = progress or (lambda what, done, total: None)
-    by_source = {o.source: o for o in outputs}
+    # every source an output holds (joined outputs hold several), so a clip placed through a
+    # bridge is checked against the bridge's output
+    by_source = {seg.source: o for o in outputs for seg in o.segments} | {
+        o.source: o for o in outputs
+    }
     # parallel tracks share one correction: check the track it was measured through
     todo = [o for o in outputs if not o.is_reference and (not o.via or o.via == o.source)]
     for k, out in enumerate(todo):

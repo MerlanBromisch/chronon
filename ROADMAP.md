@@ -37,7 +37,7 @@ These apply to every stage and decide trade-offs.
 ## Stage 2 — Robustness
 - [x] Devices: parallel tracks measured once; numbered clips grouped; short clips borrow drift — automatic, `--separate` to switch off
 - [ ] Devices: manual grouping (CLI / app)
-- [ ] Many clips per source; chain clips that only overlap with other sources
+- [x] Chain clips that do not overlap the reference through clips of other devices (multi-hop)
 - [x] Confidence from window agreement; flag files without a reliable match
 - [ ] Resolve conflicting matches between files
 - [x] Rooms with several sources at different distances (RANSAC line fit)
