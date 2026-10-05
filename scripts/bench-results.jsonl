@@ -4,3 +4,14 @@
 {"time": "2026-10-05 15:17", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 110.4, "phases_s": {"analysing": 109.9}, "peak_mb": 1100, "peak_ffmpeg_mb": 71}
 {"time": "2026-10-05 15:26", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 119.9, "phases_s": {"analysing": 119.5}, "peak_mb": 1438, "peak_ffmpeg_mb": 71}
 {"time": "2026-10-05 15:29", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 128.4, "phases_s": {"analysing": 128.0}, "peak_mb": 645, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:35", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 82.2, "phases_s": {"analysing": 81.7}, "peak_mb": 1092, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:36", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 88.0, "phases_s": {"analysing": 87.6}, "peak_mb": 1057, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:38", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 83.1, "phases_s": {"analysing": 82.7}, "peak_mb": 1080, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:42", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 134.6, "phases_s": {"analysing": 134.2}, "peak_mb": 797, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:43", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 84.3, "phases_s": {"analysing": 83.8}, "peak_mb": 1083, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:45", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 79.0, "phases_s": {"analysing": 78.6}, "peak_mb": 972, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:46", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 75.7, "phases_s": {"analysing": 75.2}, "peak_mb": 866, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:49", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 53.5, "phases_s": {"analysing": 53.1}, "peak_mb": 1011, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:50", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 53.7, "phases_s": {"analysing": 53.3}, "peak_mb": 1004, "peak_ffmpeg_mb": 71}
+{"time": "2026-10-05 15:52", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 46.7, "phases_s": {"analysing": 46.3}, "peak_mb": 682, "peak_ffmpeg_mb": 72}
+{"time": "2026-10-05 15:53", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 46.3, "phases_s": {"analysing": 45.9}, "peak_mb": 699, "peak_ffmpeg_mb": 72}

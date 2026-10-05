@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from math import gcd
@@ -210,14 +211,23 @@ class ArraySource(Source):
 
 
 class FileSource(Source):
-    """Excerpts read straight from a PCM file (WAV, AIFF, CAF, ...) by seeking."""
+    """Excerpts read straight from a PCM file (WAV, AIFF, CAF, ...) by seeking.
+    Safe to read from several threads: each thread gets its own file handle."""
 
     def __init__(self, path: Path | str, rate: int):
         self.path = Path(path)
-        self.file = sf.SoundFile(str(path))
-        self.native = self.file.samplerate
+        with sf.SoundFile(str(path)) as f:
+            self.native, self.frames, self.channels = f.samplerate, f.frames, f.channels
         self.rate = rate
-        self.length = int(self.file.frames * rate / self.native)
+        self.length = int(self.frames * rate / self.native)
+        self._local = threading.local()
+
+    @property
+    def file(self) -> sf.SoundFile:
+        f = getattr(self._local, "file", None)
+        if f is None:
+            f = self._local.file = sf.SoundFile(str(self.path))
+        return f
 
     def read(self, start: int, n: int) -> tuple[np.ndarray, float]:
         ratio = self.native / self.rate
@@ -226,11 +236,13 @@ class FileSource(Source):
         lo = first - pad
         count = int(np.ceil(n * ratio)) + 2 * pad + 2
         data = np.zeros(count, dtype=np.float32)
-        a, b = max(lo, 0), min(lo + count, self.file.frames)
+        a, b = max(lo, 0), min(lo + count, self.frames)
         if b > a:
-            self.file.seek(a)
-            block = self.file.read(b - a, dtype="float32", always_2d=True)
-            data[a - lo : a - lo + len(block)] = block.mean(axis=1)
+            f = self.file
+            f.seek(a)
+            block = f.read(b - a, dtype="float32", always_2d=True)
+            mono = block[:, 0] if self.channels == 1 else block.mean(axis=1)
+            data[a - lo : a - lo + len(block)] = mono
         if self.native != self.rate:
             data = soxr.resample(data, self.native, self.rate, quality=RESAMPLE_QUALITY)
         skip = int(round(pad / ratio))
@@ -238,7 +250,9 @@ class FileSource(Source):
         return np.ascontiguousarray(data[skip : skip + n]), exact
 
     def close(self) -> None:
-        self.file.close()
+        f = getattr(self._local, "file", None)
+        if f is not None:
+            f.close()
 
 
 def open_source(path: Path | str, rate: int) -> Source:

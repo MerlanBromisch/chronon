@@ -29,7 +29,9 @@ correlate matters little (crosstalk at |ncc| 0.05 can still be accurate).
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,7 +59,8 @@ SCREEN_FINALISTS = 4  # ... then this many tracks get SCREEN_WINDOWS_2 more wind
 SCREEN_CLEAR = 12  # ... (all tracks, if no track reached this many agreeing windows) ...
 SCREEN_WINDOWS_2 = 96
 CHECK_WINDOWS = 96  # for check(): measuring an already corrected file
-FFT_WORKERS = -1  # all cores
+FFT_WORKERS = 1  # per FFT; windows already run in parallel threads
+FINE_THREADS = min(6, os.cpu_count() or 1)
 COARSE_CHUNK = 1 << 20  # coarse search in chunks: bounded memory on long references
 SCREEN_KEEP = 2  # ... and this many are measured in full
 # When the coarse windows already show the drift, fine windows search only this far from it
@@ -124,14 +127,16 @@ class Recording:
         """The ``span`` samples of the window at position ``p`` and the exact analysis
         position of its first sample (fractional for excerpts of e.g. 44.1 kHz files)."""
         if self.source is None:
-            return self.segs[int(p)], float(p)
+            return self.segs[int(p)].astype(np.float32), float(p)
         return self.source.read(int(p), self.span)
 
     @classmethod
     def from_blocks(cls, blocks, length_hint: int, rate: int) -> Recording:
         win = _window_length(length_hint, rate)
         rec = cls(rate, length_hint, _positions(length_hint, win, rate), win)
-        bufs = {int(p): np.zeros(rec.span, dtype=np.float32) for p in rec.positions}
+        # half precision: these are streamed (video / compressed) files; rounding sits
+        # ~66 dB below the signal, far below what the correlation can resolve
+        bufs = {int(p): np.zeros(rec.span, dtype=np.float16) for p in rec.positions}
         starts = np.array(sorted(bufs))
         lowrate = soxr.ResampleStream(
             rate, COARSE_RATE, 1, dtype="float32", quality=audio.RESAMPLE_QUALITY
@@ -198,10 +203,11 @@ class Recording:
 
 
 class _Growing:
-    """A float32 buffer filled block by block, without a list-then-concatenate copy."""
+    """A buffer filled block by block, without a list-then-concatenate copy. Coarse copies
+    use half precision: they only locate a file to tens of milliseconds."""
 
-    def __init__(self, hint: int):
-        self.buf = np.zeros(max(hint, 1), dtype=np.float32)
+    def __init__(self, hint: int, dtype=np.float16):
+        self.buf = np.zeros(max(hint, 1), dtype=dtype)
         self.n = 0
 
     def add(self, x: np.ndarray) -> None:
@@ -294,13 +300,24 @@ def align_files(
     total, done = round(sum(durations)), 0.0
     refs = References.from_files(ref_paths, rate)
     results = []
-    for path, duration in zip(paths, durations, strict=True):
-        report(f"analysing {Path(path).name}", round(done), total)
-        try:
-            results.append(_align(refs, Recording.from_file(path, rate)))
-        except ValueError as e:
-            raise ValueError(f"{Path(path).name}: {e}") from None
-        done += duration
+    # the next file is decoded in the background while this one is analysed
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="chronon-load") as loader:
+        upcoming = loader.submit(Recording.from_file, paths[0], rate) if paths else None
+        for k, (path, duration) in enumerate(zip(paths, durations, strict=True)):
+            report(f"analysing {Path(path).name}", round(done), total)
+            assert upcoming is not None
+            rec = upcoming.result()
+            upcoming = (
+                loader.submit(Recording.from_file, paths[k + 1], rate)
+                if k + 1 < len(paths)
+                else None
+            )
+            try:
+                results.append(_align(refs, rec))
+            except ValueError as e:
+                raise ValueError(f"{Path(path).name}: {e}") from None
+            del rec
+            done += duration
     report("analysing", total, total)
     return results
 
@@ -528,7 +545,7 @@ def _parabolic(y: np.ndarray, k: int) -> float:
 
 
 def _energy_ok(win: np.ndarray, mean_power: float) -> bool:
-    return float(np.mean(np.square(win, dtype=np.float64))) > 1e-3 * mean_power
+    return float(np.dot(win, win)) / max(len(win), 1) > 1e-3 * mean_power
 
 
 # --- stages ----------------------------------------------------------------
@@ -545,7 +562,7 @@ def _coarse(ref: np.ndarray, other: np.ndarray, rate: int) -> _Anchor | None:
     mean_power = float(np.mean(np.square(other))) if len(other) else 0.0
     cands = []
     for p in np.linspace(0, len(other) - win, count).astype(int):
-        seg = other[p : p + win]
+        seg = np.asarray(other[p : p + win], dtype=np.float32)
         if not _energy_ok(seg, mean_power):
             continue
         k, v = _best_match(ref, seg, win, power)
@@ -596,7 +613,8 @@ def _fine(
     stretch: float = 1.0,
 ) -> list[_Match]:
     """Correlate the windows of ``rec`` starting at ``positions`` against excerpts of
-    ``ref`` near the predicted lag.
+    ``ref`` near the predicted lag. Windows are measured in parallel threads (reading,
+    resampling and FFTs release the GIL); the result keeps the order of ``positions``.
 
     ``stretch`` is the expected reference time per unit of other time (``1 + slope``);
     each window is resampled by it so drift does not smear the correlation peak.
@@ -604,17 +622,17 @@ def _fine(
     rate, win = rec.rate, rec.win
     span = min(int(np.ceil(win / stretch)) + 1, rec.span)  # other samples a window covers
     grid = np.arange(win) / stretch
-    matches = []
-    for p in positions:
+
+    def one(p: int) -> _Match | None:
         stored, x0 = rec.window(int(p))
         seg = stored[:win] if stretch == 1.0 else np.interp(grid, np.arange(span), stored[:span])
         if not _energy_ok(seg, rec.mean_power):
-            continue
+            return None
         t, margin = x0 / rate, margin_at(x0 / rate)
         lo = max(0, int(np.floor((t + lag_at(t) - margin) * rate)))
         hi = min(ref.length, int(np.ceil((t + lag_at(t) + margin) * rate)) + win)
         if hi - lo < win:
-            continue  # window lies outside the reference
+            return None  # window lies outside the reference
         excerpt, r0 = ref.read(lo, hi - lo)
         ncc = _ncc_valid(excerpt, seg)
         k = int(np.argmax(np.abs(ncc)))
@@ -625,8 +643,23 @@ def _fine(
         power = np.square(seg, dtype=np.float64)
         c = float(np.dot(np.arange(win), power) / power.sum())
         t_c = x0 + c / stretch
-        matches.append(_Match(int(p), t_c / rate, (start + c - t_c) / rate, float(ncc[k])))
-    return matches
+        return _Match(int(p), t_c / rate, (start + c - t_c) / rate, float(ncc[k]))
+
+    if len(positions) < 4:
+        found = [one(p) for p in positions]
+    else:
+        found = list(_pool().map(one, positions))
+    return [m for m in found if m is not None]
+
+
+_POOL: ThreadPoolExecutor | None = None
+
+
+def _pool() -> ThreadPoolExecutor:
+    global _POOL
+    if _POOL is None:
+        _POOL = ThreadPoolExecutor(max_workers=FINE_THREADS, thread_name_prefix="chronon")
+    return _POOL
 
 
 def _arrays(matches: list[_Match]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

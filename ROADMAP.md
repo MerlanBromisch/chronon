@@ -5,12 +5,12 @@ These apply to every stage and decide trade-offs.
 
 - **Fast.** Sync should feel instant, as PluralEyes did — no waiting minutes on a crawling bar.
   Target: the 4 h musical (18 desk tracks, Zoom, 4 camera files) in under a minute on an
-  Apple-silicon Mac. Baseline 2026-10-05: 1242 s; now 128 s (`scripts/bench.py sync`).
+  Apple-silicon Mac. Baseline 2026-10-05: 1242 s; now 46 s (`scripts/bench.py sync`). ✓
 - **Honest progress.** Show how long the sync will still take (time remaining), based on the
   work actually left, not a bar that just moves.
 - **Small memory footprint.** Under 1 GB peak, independent of recording length. Baseline:
-  18.5 GB; now 645 MB — references and PCM files are read as excerpts, only video files are
-  streamed once with their measurement windows kept.
+  18.5 GB; now ~690 MB ✓ — references and PCM files are read as excerpts, only video files
+  are streamed once with their measurement windows kept (half precision).
 - **Accurate and honest results.** Every file within 0.1 ms where the material allows it, and
   a clear "no reliable match" instead of a made-up number.
 
