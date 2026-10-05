@@ -95,6 +95,32 @@ table — built by CI for all three platforms. It answers early: does PyInstalle
 PySide6 + numpy + scipy + soxr + soundfile + ffmpeg, how big is it, how fast does it start.
 If it fails, Electron with the same `--json` contract is plan B; nothing in the core is lost.
 
+### Spike result (2026-10-05, branch `spike/packaging`)
+Passed on all three platforms. `.github/workflows/app.yml` builds with PyInstaller, then runs
+the frozen worker on synthetic media (one file AAC, decoded by the bundled ffmpeg, no system
+ffmpeg on PATH) and a headless GUI self test (offscreen Qt: drop → worker → result table →
+listening excerpt).
+
+| | Build | Worker run | GUI self test | Unpacked | Zip |
+|---|---|---|---|---|---|
+| macOS 14 arm64 | 40 s | 1 s | 3 s | 302 MB | ~128 MB |
+| Windows | 105 s | 7 s | 10 s | 513 MB | 206 MB |
+| Ubuntu 22.04 | 50 s | 2 s | 3 s | 622 MB | 251 MB |
+
+Findings:
+- The windowed Windows build can talk JSON over stdout to its parent (worker falls back to fd 1
+  when `sys.stdout` is None).
+- QtMultimedia lives in `pyside6-addons`, not `pyside6-essentials`; both are needed.
+- About 130 MB per platform are the static `ffmpeg` + `ffprobe` executables. QtMultimedia
+  already ships FFmpeg 7.1 as LGPL shared libraries. Decoding through libraries (e.g. PyAV, whose
+  wheels bundle LGPL FFmpeg) instead of the executables would remove that size and the licence
+  question below. Not urgent.
+- No LGPL `ffmpeg` download exists for macOS arm64; the spike uses martin-riedl.de's GPL build.
+  Shipping a GPL executable next to an MIT app is aggregation (allowed, with a pointer to its
+  source), but an LGPL route is cleaner — see the point above.
+- Size not trimmed yet (unused Qt modules, Linux pulls in many libraries). Download size does
+  not matter for now.
+
 ## Later
 - Timeline view with waveforms (needs peak overviews from the core) and manual correction
 - Premiere Pro export (#7), DaVinci Resolve check (#8)

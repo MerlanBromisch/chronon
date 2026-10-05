@@ -53,7 +53,7 @@ These apply to every stage and decide trade-offs.
 Concept and decisions: [docs/app.md](docs/app.md). Python + PySide6, jobs in a child process.
 - [ ] `--json` progress/result events and a versioned report schema
 - [ ] Windows in CI; path robustness (drive letters, long paths, Unicode, case)
-- [ ] Packaging spike: PyInstaller builds for all three platforms from CI (unsigned)
+- [x] Packaging spike: PyInstaller builds for all three platforms from CI (unsigned) — branch `spike/packaging`
 - [ ] Drop & export: files, devices and reference, sync with progress, result table, export
 - [ ] Listen to a match (reference and file together)
 - [ ] Later: timeline view with confidence per clip, manual correction of wrong matches
