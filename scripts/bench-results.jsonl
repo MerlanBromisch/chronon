@@ -15,3 +15,6 @@
 {"time": "2026-10-05 15:50", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 53.7, "phases_s": {"analysing": 53.3}, "peak_mb": 1004, "peak_ffmpeg_mb": 71}
 {"time": "2026-10-05 15:52", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 46.7, "phases_s": {"analysing": 46.3}, "peak_mb": 682, "peak_ffmpeg_mb": 72}
 {"time": "2026-10-05 15:53", "version": "0.0.1", "mode": "sync", "refs": 18, "files": 7, "total_s": 46.3, "phases_s": {"analysing": 45.9}, "peak_mb": 699, "peak_ffmpeg_mb": 72}
+{"time": "2026-10-05 15:56", "version": "0.0.1", "mode": "correct", "refs": 18, "files": 7, "total_s": 162.9, "phases_s": {"analysing": 45.5, "writing": 113.5, "verifying": 3.4}, "peak_mb": 735, "peak_ffmpeg_mb": 72}
+{"time": "2026-10-05 15:59", "version": "0.0.1", "mode": "correct", "refs": 18, "files": 7, "total_s": 91.0, "phases_s": {"analysing": 49.3, "writing": 37.8, "verifying": 3.4}, "peak_mb": 679, "peak_ffmpeg_mb": 72}
+{"time": "2026-10-05 16:04", "version": "0.0.1", "mode": "correct", "refs": 18, "files": 7, "total_s": 105.0, "phases_s": {"analysing": 62.6, "writing": 37.9, "verifying": 3.9}, "peak_mb": 734, "peak_ffmpeg_mb": 72}

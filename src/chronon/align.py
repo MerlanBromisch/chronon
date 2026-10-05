@@ -32,7 +32,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -58,7 +58,7 @@ SCREEN_WINDOWS = 48  # per reference track when choosing among several ...
 SCREEN_FINALISTS = 4  # ... then this many tracks get SCREEN_WINDOWS_2 more windows ...
 SCREEN_CLEAR = 12  # ... (all tracks, if no track reached this many agreeing windows) ...
 SCREEN_WINDOWS_2 = 96
-CHECK_WINDOWS = 96  # for check(): measuring an already corrected file
+CHECK_WINDOWS = 192  # for check(): measuring an already corrected file
 FFT_WORKERS = 1  # per FFT; windows already run in parallel threads
 FINE_THREADS = min(6, os.cpu_count() or 1)
 COARSE_CHUNK = 1 << 20  # coarse search in chunks: bounded memory on long references
@@ -84,6 +84,8 @@ class Alignment:
     windows_used: int  # windows agreeing with the line
     windows_total: int  # windows with signal
     wander_ms: float = 0.0  # largest deviation of a quarter of the file from the line
+    # times (s, in the other file) of the windows on the line: where this pair can be measured
+    good_s: tuple[float, ...] = field(default=(), repr=False, compare=False)
 
     @property
     def reliable(self) -> bool:
@@ -183,11 +185,19 @@ class Recording:
         return rec
 
     @classmethod
-    def sampled(cls, source: audio.Source, count: int) -> Recording:
-        """Only ``count`` windows, read from ``source`` as needed; no coarse copy."""
-        win = _window_length(source.length, source.rate)
-        usable = max(source.length - win - win // 1000 - 6, 0)
-        positions = np.unique(np.linspace(0, usable, count).astype(int))
+    def sampled(
+        cls, source: audio.Source, count: int, start: int = 0, at_s: Sequence[float] = ()
+    ) -> Recording:
+        """``count`` windows read from ``source`` as needed, no coarse copy: at the times
+        ``at_s`` (evenly thinned out) or else spread from sample ``start`` on."""
+        win = _window_length(source.length - start, source.rate)
+        usable = max(source.length - win - win // 1000 - 6, start)
+        if len(at_s):
+            times = np.sort(np.asarray(at_s, dtype=float))
+            times = times[np.unique(np.linspace(0, len(times) - 1, count).astype(int))]
+            positions = np.unique(np.clip((times * source.rate).astype(int) - win // 2, 0, usable))
+        else:
+            positions = np.unique(np.linspace(start, usable, count).astype(int))
         return cls._lazy(source, positions, win)
 
     @classmethod
@@ -323,17 +333,35 @@ def align_files(
 
 
 def check(
-    ref: audio.Source, other: audio.Source, expected_offset_s: float, count: int = CHECK_WINDOWS
+    ref: audio.Source,
+    other: audio.Source,
+    expected_offset_s: float,
+    count: int = CHECK_WINDOWS,
+    audio_from_s: float = 0.0,
+    at_s: Sequence[float] = (),
 ) -> Alignment:
-    """Measure ``other`` against ``ref`` at ``count`` windows near an expected offset and
-    zero drift: a fast, independent check of a corrected file."""
-    rec = Recording.sampled(other, count)
-    return _measure(
+    """Test a corrected file against the expectation "offset as computed, no drift".
+
+    ``count`` windows are spread over the part of ``other`` that holds audio (from
+    ``audio_from_s``, i.e. after any padding). The line is not searched from scratch, where
+    a second acoustic path a few ms away could win on a small sample: it starts at the
+    expected line and is then refitted to the windows that agree with it. A wrong
+    correction pulls the refitted line away from the expectation, which the caller
+    compares against its tolerances."""
+    rec = Recording.sampled(other, count, start=int(audio_from_s * other.rate), at_s=at_s)
+    matches = _fine(
         ref,
         rec,
         rec.positions,
         lag_at=lambda t: expected_offset_s,
         margin_at=lambda t: COARSE_TOLERANCE_S + 50e-6 * t,
+    )
+    if not matches:
+        raise ValueError("the files do not seem to overlap")
+    t, lag, ncc = _arrays(matches)
+    slope, intercept, inlier = _consensus(t, lag, np.abs(ncc), initial=(0.0, expected_offset_s))
+    return _result(
+        slope, intercept, ncc[inlier], len(matches), _wander(t, lag - intercept), good_s=t[inlier]
     )
 
 
@@ -459,7 +487,7 @@ def _measure(
     t, lag, ncc = _arrays(matches)
     slope, intercept, inlier = _consensus(t, lag, np.abs(ncc))
     wander = _wander(t, lag - (intercept + slope * t))
-    first = _result(slope, intercept, ncc[inlier], len(matches), wander)
+    first = _result(slope, intercept, ncc[inlier], len(matches), wander, good_s=t[inlier])
 
     stretch = 1 / (1 + first.drift_ppm * 1e-6)
     refined = _fine(
@@ -474,7 +502,9 @@ def _measure(
         return first
     t, lag, ncc = _arrays(refined)
     slope, intercept, _ = _consensus(t, lag, np.abs(ncc), initial=(slope, intercept))
-    return _result(slope, intercept, ncc, len(matches), wander, used=first.windows_used)
+    return _result(
+        slope, intercept, ncc, len(matches), wander, used=first.windows_used, good_s=first.good_s
+    )
 
 
 # --- correlation -----------------------------------------------------------
@@ -756,6 +786,7 @@ def _result(
     total: int,
     wander_ms: float,
     used: int | None = None,
+    good_s: Sequence[float] = (),
 ) -> Alignment:
     used = len(inlier_ncc) if used is None else used
     return Alignment(
@@ -766,4 +797,5 @@ def _result(
         windows_used=used,
         windows_total=total,
         wander_ms=wander_ms,
+        good_s=tuple(float(x) for x in good_s),
     )
