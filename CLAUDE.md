@@ -51,4 +51,5 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - Export design decisions: `docs/export.md`. Desktop app decisions: `docs/app.md`.
 - Devices: parallel tracks share one measurement (screened as (reference track, track) pairs; an electrical copy
   of a desk channel beats any acoustic match); clips keep their own drift (clocks change rate over hours),
-  only clips too short/weak borrow a sibling's. Coarse search tries loud tracks first (quiet desk channels rarely share).
+  only clips too short/weak borrow a sibling's. Clips without a reliable match to the reference are linked
+  through placed clips of other devices (`_link`, composed exactly; verified against the bridge's output). Coarse search tries loud tracks first (quiet desk channels rarely share).

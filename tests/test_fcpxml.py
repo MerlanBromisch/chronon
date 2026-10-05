@@ -222,3 +222,43 @@ def test_joined_camera_audio_keeps_every_video_clip(tmp_path):
     assert sorted(c.get("name") for c in videos) == ["cam", "cam2"]
     joined = next(o for o in outputs if len(o.segments) == 2)
     assert sum("video placed" in n for n in joined.notes) == 2
+
+
+def _video_file(path: Path, drop_half_after: float | None) -> Path:
+    """20 s of 30 fps video with sound; optionally every other frame dropped after
+    ``drop_half_after`` seconds, as a phone does when the light gets low."""
+    vf = ["-vf", f"select='lt(t\\,{drop_half_after})+not(mod(n\\,2))'", "-fps_mode", "vfr"]
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x120:r=30:d=20",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=440:d=20",
+            *(vf if drop_half_after else []),
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(path),
+        ],
+        check=True,
+    )
+    return path
+
+
+def test_variable_frame_rate_video_keeps_its_real_length(tmp_path):
+    vfr = fcpxml.probe(_video_file(tmp_path / "vfr.mp4", 10.0))
+    cfr = fcpxml.probe(_video_file(tmp_path / "cfr.mp4", None))
+    assert vfr.variable_rate and not cfr.variable_rate
+    assert float(vfr.duration) == pytest.approx(20.0, abs=0.15)  # not 450 frames x 1/30 s
+    assert float(cfr.duration) == pytest.approx(20.0, abs=0.05)
+    assert vfr.frame == Fraction(1, 30) and vfr.duration % vfr.frame == 0

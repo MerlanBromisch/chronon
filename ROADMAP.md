@@ -37,7 +37,7 @@ These apply to every stage and decide trade-offs.
 ## Stage 2 — Robustness
 - [x] Devices: parallel tracks measured once; numbered clips grouped; short clips borrow drift — automatic, `--separate` to switch off
 - [ ] Devices: manual grouping (CLI / app)
-- [ ] Many clips per source; chain clips that only overlap with other sources
+- [x] Chain clips that do not overlap the reference through clips of other devices (multi-hop)
 - [x] Confidence from window agreement; flag files without a reliable match
 - [ ] Resolve conflicting matches between files
 - [x] Rooms with several sources at different distances (RANSAC line fit)
@@ -45,7 +45,8 @@ These apply to every stage and decide trade-offs.
 - [ ] Non-linear clock drift: detected (`wander_ms`), not yet corrected (piecewise fit)
 - [x] Stream long files instead of holding them in memory (see Goals)
 - [ ] Video drift via retiming in the export (no video re-encode)
-- [ ] Variable frame rate (phone) footage
+- [x] Variable frame rate video: real length (not frame count × frame duration), flagged in reports
+- [ ] Variable frame rate: verify with real iPhone footage (Auto-FPS, low light) in Final Cut
 - [ ] Premiere Pro export (FCP 7 XML) — later, #7
 - [ ] DaVinci Resolve: verify FCPXML import — later, #8
 

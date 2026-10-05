@@ -168,6 +168,10 @@ def run(
             out = next(o for o in outputs if str(p.item.path) in {g.source for g in o.segments})
             label = f"{p.item.path.name}: " if len(out.segments) > 1 else ""
             out.notes.append(f"{label}video placed within ±{p.error_ms:.0f} ms")
+            if p.media.variable_rate:
+                out.notes.append(
+                    f"{label}variable frame rate: check picture against sound at the clip's end"
+                )
     write_report(outputs, outdir)
     return outputs
 
@@ -213,7 +217,12 @@ def sync(
             r.is_reference or r.alignment.reliable,
             p.error_ms,
             r.device,
-            result_notes(r),
+            result_notes(r)
+            + (
+                ["variable frame rate: check picture against sound at the end"]
+                if p.media.variable_rate
+                else []
+            ),
         )
         for (f, r), p in zip(entries, placed, strict=True)
     ]
@@ -278,6 +287,8 @@ def result_notes(r: align.FileResult) -> list[str]:
         notes.append(f"measured via {r.via.name}")
     if r.drift_from is not None:
         notes.append(f"drift from {r.drift_from.name}")
+    if r.linked_via is not None:
+        notes.append(f"linked via {r.linked_via.name} (no reliable overlap with the reference)")
     return notes
 
 
@@ -491,7 +502,11 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
     """Measure every written file against its reference track's output again, at
     CHECK_WINDOWS windows spread over the file (excerpts only, nothing loaded whole)."""
     report = progress or (lambda what, done, total: None)
-    by_source = {o.source: o for o in outputs}
+    # every source an output holds (joined outputs hold several), so a clip placed through a
+    # bridge is checked against the bridge's output
+    by_source = {seg.source: o for o in outputs for seg in o.segments} | {
+        o.source: o for o in outputs
+    }
     # parallel tracks share one correction: check the track it was measured through
     todo = [o for o in outputs if not o.is_reference and (not o.via or o.via == o.source)]
     for k, out in enumerate(todo):

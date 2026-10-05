@@ -68,6 +68,7 @@ class Media:
     frame: Fraction | None = None
     width: int = 0
     height: int = 0
+    variable_rate: bool = False  # frames not evenly spaced (phones in low light)
 
 
 @dataclass
@@ -256,6 +257,7 @@ def probe(path: Path | str) -> Media:
     )
     frame = None
     start = Fraction(0)
+    variable = False
     if video:
         num, den = (int(x) for x in video.get("r_frame_rate", "25/1").split("/"))
         frame = Fraction(den, num)
@@ -263,7 +265,13 @@ def probe(path: Path | str) -> Media:
         if tc:
             start = _timecode(tc, frame)
         nb = int(video.get("nb_frames") or 0)
-        duration = nb * frame if nb else Fraction(info.frames, info.sample_rate)
+        stream_duration = _stream_duration(video) or Fraction(info.frames, info.sample_rate)
+        avg = video.get("avg_frame_rate", "0/0")
+        variable = (avg not in ("0/0", video.get("r_frame_rate"))) or (
+            nb > 0 and abs(nb * frame - stream_duration) > frame
+        )
+        # with a variable frame rate the frame count says nothing about the length
+        duration = (stream_duration // frame) * frame if variable or not nb else nb * frame
     else:
         ref = fmt_tags.get("time_reference")
         if ref:
@@ -279,7 +287,18 @@ def probe(path: Path | str) -> Media:
         frame=frame,
         width=int(video.get("width", 0)) if video else 0,
         height=int(video.get("height", 0)) if video else 0,
+        variable_rate=bool(video) and variable,
     )
+
+
+def _stream_duration(stream: dict) -> Fraction | None:
+    ts, base = stream.get("duration_ts"), stream.get("time_base")
+    if ts and base and "/" in base:
+        num, den = (int(x) for x in base.split("/"))
+        return Fraction(int(ts) * num, den)
+    if stream.get("duration"):
+        return Fraction(stream["duration"])
+    return None
 
 
 def _timecode_tag(streams: list[dict], fmt_tags: dict) -> str | None:

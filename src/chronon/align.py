@@ -62,6 +62,7 @@ SCREEN_WINDOWS_2 = 96
 CHECK_WINDOWS = 192  # for check(): measuring an already corrected file
 FFT_WORKERS = 1  # per FFT; windows already run in parallel threads
 FINE_THREADS = min(6, os.cpu_count() or 1)
+LINK_TRIES = 4  # bridges tried for a clip that does not overlap the reference
 LEAD_TRIES = 6  # parallel tracks tried for the coarse position (loudest first)
 COARSE_REF_TRIES = 4  # reference tracks tried for the coarse position of one file
 BORROW_SPAN_S = 600.0  # a clip measurable over less than this takes a sibling's drift
@@ -324,6 +325,7 @@ class FileResult:
     is_reference: bool = False  # on the reference's clock and start: offset 0, no drift
     via: Path | None = None  # the parallel track its clip was measured through
     drift_from: Path | None = None  # the sibling clip whose drift it took
+    linked_via: Path | None = None  # placed through this clip of another device (bridge)
 
 
 def align_files(
@@ -348,6 +350,7 @@ def align_files(
     out: dict[Path, FileResult] = {
         t: FileResult(t, identity, devs[0].name, is_reference=True) for t in ref_tracks
     }
+    errors: dict[Path, str] = {}
     clips = [(d, c) for d in devs[1:] for c in d.clips]
     for _, c in clips:
         c.tracks = _by_level(c.tracks, rate)
@@ -375,16 +378,95 @@ def align_files(
             try:
                 index, a, lead = _align_clip(refs, clip.tracks, rec, rate, stage)
             except ValueError as e:
-                raise ValueError(f"{name}: {e}") from None
-            via = lead if len(clip.tracks) > 1 else None
-            for t in clip.tracks:
-                out[t] = FileResult(ref_tracks[index], a, dev.name, via=via)
+                errors[clip.tracks[0]] = str(e)
+            else:
+                via = lead if len(clip.tracks) > 1 else None
+                for t in clip.tracks:
+                    out[t] = FileResult(ref_tracks[index], a, dev.name, via=via)
             del rec
             done += duration
+    _link(clips, out, rate, lambda text: report(f"analysing ({text})", total, total))
+    for _, clip in clips:
+        if clip.tracks[0] not in out:
+            raise ValueError(f"{clip.tracks[0].name}: {errors[clip.tracks[0]]}")
     for dev in devs[1:]:
         _borrow_drift(dev, out)
     report("analysing", total, total)
     return [out[Path(p)] for p in paths]
+
+
+def _link(
+    clips: Sequence[tuple[devices.Device, devices.Clip]],
+    out: dict[Path, FileResult],
+    rate: int,
+    status: Callable[[str], None],
+) -> None:
+    """Place clips that found no reliable match with the reference through clips of other
+    devices that did (a camera that started before the desk, but overlaps the Zoom). The
+    two measurements are composed exactly; a newly placed clip can bridge the next one."""
+
+    def placed(clip: devices.Clip) -> bool:
+        r = out.get(clip.tracks[0])
+        return r is not None and (r.is_reference or r.alignment.reliable)
+
+    def priority(item: tuple[devices.Device, devices.Clip]) -> tuple[bool, float]:
+        info = audio.probe(item[1].tracks[0])  # PCM bridges read fast; longer ones overlap more
+        return (not info.codec.startswith("pcm_") or info.has_video, -info.duration_s)
+
+    changed = True
+    while changed:
+        changed = False
+        for dev, clip in clips:
+            if placed(clip):
+                continue
+            bridges = sorted([(d, c) for d, c in clips if d is not dev and placed(c)], key=priority)
+            rec: Recording | None = None
+            best: tuple[Alignment, Alignment, Path, Path] | None = None
+            for _, bridge in bridges[:LINK_TRIES]:
+                rb = out[bridge.tracks[0]]
+                track = rb.via or bridge.tracks[0]
+                status(f"linking {clip.tracks[0].name} via {track.name}")
+                rec = rec or Recording.from_file(clip.tracks[0], rate)
+                try:
+                    _, a, lead = _align_clip(
+                        References.from_files([track], rate), clip.tracks, rec, rate, lambda f: None
+                    )
+                except ValueError:
+                    continue
+                if a.reliable and (best is None or _rank(a) > _rank(best[0])):
+                    best = (a, _compose(a, rb.alignment), track, lead)
+            if best is None:
+                continue
+            a, composed, track, lead = best
+            old = out.get(clip.tracks[0])
+            if old is not None and _rank(old.alignment) >= _rank(a):
+                continue
+            for t in clip.tracks:
+                out[t] = FileResult(
+                    track,
+                    composed,
+                    dev.name,
+                    via=lead if len(clip.tracks) > 1 else None,
+                    linked_via=track,
+                )
+            changed = True
+
+
+def _compose(xy: Alignment, y: Alignment) -> Alignment:
+    """x aligned to y, and y to the reference: x aligned to the reference."""
+    dy = 1 + y.drift_ppm * 1e-6
+    composed = replace(
+        xy,
+        offset_s=y.offset_s + xy.offset_s / dy,
+        drift_ppm=((1 + xy.drift_ppm * 1e-6) * dy - 1) * 1e6,
+    )
+    # the agreeing windows' lags, re-expressed against the reference (scatter kept)
+    t = np.array(xy.good_s)
+    if len(t):
+        resid = np.array(xy.good_lag) - (xy.ref_time(t) - t)
+        lag = composed.ref_time(t) - t + resid
+        composed = replace(composed, good_lag=tuple(float(v) for v in lag))
+    return composed
 
 
 def _by_level(tracks: Sequence[Path], rate: int) -> list[Path]:
