@@ -52,7 +52,7 @@ These apply to every stage and decide trade-offs.
 
 ## Stage 3 — Desktop app (macOS, Windows, Linux)
 Concept and decisions: [docs/app.md](docs/app.md). Python + PySide6, jobs in a child process.
-- [ ] `--json` progress/result events and a versioned report schema
+- [x] `--json` progress/result events and a versioned report schema
 - [ ] Windows in CI; path robustness (drive letters, long paths, Unicode, case)
 - [x] Packaging spike: PyInstaller builds for all three platforms from CI (unsigned) — branch `spike/packaging`
 - [ ] Drop & export: files, devices and reference, sync with progress, result table, export

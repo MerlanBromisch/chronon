@@ -47,16 +47,33 @@ chronon (core, unchanged)  ←  chronon.gui (PySide6, optional extra: uv sync --
 - The "never write next to the originals" rule stays in the core (`correct`), the GUI only
   repeats the check early to show a clear message.
 
-### `--json` events (sketch)
-One JSON object per line on stdout; human output goes to stderr or is switched off.
+### `--json` contract (version 1)
+`chronon analyze|sync|correct --json …` writes one JSON object per line to stdout and
+nothing else; tracebacks of unexpected errors go to stderr. Every object has `"v": 1` (bumped
+when a field changes meaning or goes away; new fields may appear any time) and `"event"`:
+
 ```json
-{"v": 1, "event": "progress", "step": "fine", "done": 0.42, "eta_s": 18.5}
-{"v": 1, "event": "warning", "file": "ZOOM0003.WAV", "message": "no reliable match"}
-{"v": 1, "event": "result", "report": "/path/to/out/report.json"}
+{"v": 1, "event": "progress", "step": "writing", "step_number": 2, "steps": 3,
+ "what": "writing", "done": 0.42, "left_s": 18.5}
+{"v": 1, "event": "result", "command": "correct", "report": "…/chronon-report.json",
+ "timeline": "…/Show.fcpxml", "failed": 0, "files": [ … ]}
 {"v": 1, "event": "error", "message": "…"}
 ```
-`progress` uses the same measures as the CLI today (seconds analysed, samples written, files
-checked), so time left stays honest.
+- `progress`: `step` is one of the command's steps (`analysing`; `correct`: `analysing`,
+  `writing`, `verifying`), `what` the detail (e.g. `analysing ZOOM0003.WAV`), `done` 0…1 within
+  the step, `left_s` the time left in the step or `null` while it cannot be estimated yet. Measured
+  in real work (seconds analysed, samples written, files checked), at most ten events a second.
+- `result` (exactly one, last, on success): `files` are the same rows as the report file —
+  `analyze`: offset, drift, confidence, `reliable`, windows, `via` / `drift_from` /
+  `linked_via`, `notes`; `sync`: the `chronon-sync.json` rows; `correct`: the
+  `chronon-report.json` rows. `correct` exits 1 when `failed` > 0.
+- `error`: the run stopped (exit code 1); `message` is meant for the user.
+- Files without a reliable match are not errors: their row says `"reliable": false`.
+
+Report files (`chronon-report.json`, `chronon-sync.json`) are
+`{"schema": 1, "chronon": "<version>", "kind": "correct"|"sync", "files": [rows]}`. Reports
+from before 2026-10-05 are a bare list of rows (schema 0) and stay readable
+(`correct.read_report`).
 
 ## Version 1 screens
 1. **Drop** — files and folders; per file: duration, rate, channels, timecode / BWF start.
@@ -83,7 +100,7 @@ checked), so time left stays honest.
 - No auto-updater. At most a "new version available" hint from GitHub Releases, later.
 
 ## Prerequisites in the core
-- [ ] `--json` mode for `analyze`, `sync`, `correct` (events above) and a versioned report schema
+- [x] `--json` mode for `analyze`, `sync`, `correct` (contract above) and a versioned report schema
 - [ ] Windows in CI; path robustness (drive letters, long paths, Unicode normalisation, case-
       insensitive file systems), including the originals check (compare real paths / same file)
 - [ ] Small API for listening: a mono/stereo excerpt of a file at reference time *t*, using
