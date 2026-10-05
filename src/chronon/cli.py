@@ -102,6 +102,11 @@ def _ref_args(p: argparse.ArgumentParser, export: bool = True) -> None:
         "(e.g. all channels of a desk) and each file uses the one it matches best. "
         "Default: the first file",
     )
+    p.add_argument(
+        "--separate",
+        action="store_true",
+        help="measure every file on its own instead of grouping them into devices",
+    )
     if export:
         p.add_argument(
             "--all-refs",
@@ -136,15 +141,20 @@ def _synth(args: argparse.Namespace) -> int:
 def _analyze(args: argparse.Namespace) -> int:
     refs, files = _refs_and_files(args)
     progress = _Progress(["analysing"])
-    results = align.align_files(refs, files, progress=progress)
+    results = align.align_files(refs, files, progress=progress, separate=args.separate)
     progress.finish()
     print(f"reference: {', '.join(Path(r).name for r in refs)}")
-    print(f"{'file':<24} {'offset s':>13} {'drift ppm':>10} {'confidence':>10}  windows  notes")
-    for path, (ref_index, a) in zip(files, results, strict=True):
+    print(
+        f"{'file':<24} {'device':<12} {'offset s':>13} {'drift ppm':>10} {'confidence':>10}"
+        "  windows  notes"
+    )
+    for path, r in zip(files, results, strict=True):
+        a = r.alignment
+        via = r.reference.name if len(refs) > 1 and not r.is_reference else None
         print(
-            f"{Path(path).name:<24} {a.offset_s:>13.6f} {a.drift_ppm:>+10.2f} "
+            f"{Path(path).name:<24} {r.device[:12]:<12} {a.offset_s:>13.6f} {a.drift_ppm:>+10.2f} "
             f"{a.confidence:>10.2f}  {a.windows_used:>4}/{a.windows_total:<4} "
-            + ", ".join(_notes(a, Path(refs[ref_index]).name if len(refs) > 1 else None))
+            + ", ".join(([] if r.is_reference else _notes(a, via)) + correct.result_notes(r))
         )
     return 0
 
@@ -163,6 +173,7 @@ def _correct(args: argparse.Namespace) -> int:
         progress=progress,
         all_refs=args.all_refs,
         name=args.name,
+        separate=args.separate,
     )
     progress.finish()
     print(correct.format_report(outputs))
@@ -177,14 +188,16 @@ def _correct(args: argparse.Namespace) -> int:
 def _sync(args: argparse.Namespace) -> int:
     refs, files = _refs_and_files(args)
     progress = _Progress(["analysing"])
-    result = correct.sync(refs, files, args.out, progress, args.all_refs, args.name)
+    result = correct.sync(
+        refs, files, args.out, progress, args.all_refs, args.name, separate=args.separate
+    )
     progress.finish()
     print(f"{'file':<28} {'timeline s':>12} {'drift ppm':>10} {'off at ends':>12}  notes")
     for r in result:
-        note = "" if r.reliable else "NO RELIABLE MATCH"
+        notes = ([] if r.reliable else ["NO RELIABLE MATCH"]) + r.notes
         print(
             f"{Path(r.source).name:<28} {r.position_s:>12.6f} {r.drift_ppm:>+10.2f} "
-            f"{r.error_ms:>9.1f} ms  {note}"
+            f"{r.error_ms:>9.1f} ms  {', '.join(notes)}"
         )
     print(f"timeline: {Path(args.out) / ((args.name or Path(args.out).name) + '.fcpxml')}")
     return 0
@@ -252,12 +265,15 @@ def _eval(args: argparse.Namespace) -> int:
     ref_dev = truth["devices"][0]
     ref_clip = ref_dev["clips"][0]
     others = [(d, c) for d in truth["devices"] for c in d["clips"] if c is not ref_clip]
-    results = align.align_files([scene / ref_clip["file"]], [scene / c["file"] for _, c in others])
+    results = align.align_files(
+        [scene / ref_clip["file"]], [scene / c["file"] for _, c in others], separate=True
+    )
     print(f"reference: {ref_clip['file']}")
     print(
         f"{'file':<16} {'offset err ms':>13} {'drift ppm':>10} {'true ppm':>9} {'confidence':>10}"
     )
-    for (dev, clip), (_, a) in zip(others, results, strict=True):
+    for (dev, clip), result in zip(others, results, strict=True):
+        a = result.alignment
         offset, drift = synth.expected_alignment(
             ref_clip["start_s"], ref_dev["drift_ppm"], clip["start_s"], dev["drift_ppm"]
         )

@@ -69,6 +69,12 @@ uv run chronon sync -r desk/ch18.wav zoom.wav camera.mp4 -o ~/Desktop/timeline
 ```
 
 With several `-r` tracks only those some file matched best are exported (`--all-refs` for all).
+Files are grouped into devices automatically (`--separate` to switch off): parallel tracks
+of one recording (desk channels, a recorder's inputs) are measured once and corrected alike, so
+e.g. all 32 channels of a desk can be passed at once; numbered clips of one recorder
+(ZOOM0003/ZOOM0004) share a timeline lane, and a clip too short to show its own drift takes it
+from its sibling. Tracks recorded with the reference (same clock and start) are not measured.
+
 In a terminal, all commands show the current step, its progress and the time left.
 `chronon timeline OUTDIR` rebuilds the `.fcpxml` of an earlier run from its report in seconds.
 

@@ -33,6 +33,9 @@ class Info:
     bits: int  # PCM bit depth; 24 for compressed audio (AAC, MP3, ...)
     frames: int  # samples per channel (estimated from the duration if not stored)
     has_video: bool
+    codec: str = ""
+    time_reference: int | None = None  # BWF time stamp (samples since midnight)
+    recorder: str = ""  # whatever names the device: BWF encoder, MP4 brand / encoder tag
 
     @property
     def duration_s(self) -> float:
@@ -72,7 +75,21 @@ def probe(path: Path | str) -> Info:
         s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")
         for s in streams
     )
-    return Info(rate, int(a["channels"]), bits, frames, has_video)
+    tags = {k.lower(): v for k, v in data.get("format", {}).get("tags", {}).items()}
+    ref = tags.get("time_reference")
+    recorder = " ".join(
+        str(tags[k]) for k in ("encoded_by", "originator", "major_brand", "encoder") if tags.get(k)
+    )
+    return Info(
+        rate,
+        int(a["channels"]),
+        bits,
+        frames,
+        has_video,
+        codec=str(a.get("codec_name", "")),
+        time_reference=int(ref) if ref and str(ref).isdigit() else None,
+        recorder=recorder,
+    )
 
 
 def stream(path: Path | str, channels: int, block_frames: int = 1 << 16) -> Iterator[np.ndarray]:

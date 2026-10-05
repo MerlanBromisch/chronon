@@ -43,9 +43,21 @@ halves filmed by one camera, all channels of a desk. Chronon groups them automat
 (folder, file name pattern such as `ZOOM…`, `C23…`, `R62_…`, header metadata such as the
 recorder model) and the user can correct the grouping.
 
-- Analysis: all clips of a device share one drift, so short clips profit from long ones,
-  and any channel of a desk can serve as its reference (as `analyze -r` does today).
-- Export: per clip or joined per device (see above).
+Two kinds of grouping, decided 2026-10-05 after looking at the musical:
+
+- **Parallel tracks** (desk channels, Zoom Tr1/Tr2/LR): same folder, sample rate, length and
+  BWF time stamp. Measured once through the track that matches best; every track gets exactly
+  the same correction (so all 32 channels of a desk can be corrected in one go).
+- **Clips of a device** (ZOOM0003/0004, C2378/C2379): same folder, file name prefix, format and
+  recorder tag. Each clip is measured; a clip too short or too weak to show its own drift takes
+  the drift of its sibling.
+- A device does **not** get one common drift: the musical's Zoom ran at −8.23 ppm in its first
+  half and −11.21 ppm in its second, each half on its own line within ±0.5 ms. Forcing one rate
+  would be off by up to ~10 ms at the ends.
+- Metadata groups files but does not place them: both cameras use record-run timecode, so
+  C2379's timecode continues C2378's although it started 38 minutes later.
+- Automatic, shown before the results, can be switched off.
+- Export: per clip (default) or joined per device; one timeline lane per device.
 
 ## Video
 
