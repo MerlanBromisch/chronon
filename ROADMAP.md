@@ -16,7 +16,7 @@ These apply to every stage and decide trade-offs.
 - **Accurate and honest results.** Every file within 0.1 ms where the material allows it, and
   a clear "no reliable match" instead of a made-up number.
 
-## Stage 1 — Core (CLI / drop app)
+## Stage 1 — Core (CLI)
 - [x] Project setup (uv, pytest, ruff, CI on Linux + macOS)
 - [x] Synthetic test scenarios with known offset / drift (`chronon synth`)
 - [x] Decode audio from any audio/video file (ffmpeg)
@@ -46,12 +46,18 @@ These apply to every stage and decide trade-offs.
 - [x] Stream long files instead of holding them in memory (see Goals)
 - [ ] Video drift via retiming in the export (no video re-encode)
 - [ ] Variable frame rate (phone) footage
-- [ ] Premiere Pro XML and DaVinci Resolve export
+- [ ] Premiere Pro export (FCP 7 XML) — later, #7
+- [ ] DaVinci Resolve: verify FCPXML import — later, #8
 
-## Stage 3 — Mac app
-- [ ] Timeline view with confidence per clip
-- [ ] Manual correction of wrong matches
-- [ ] Signed & notarized build
+## Stage 3 — Desktop app (macOS, Windows, Linux)
+Concept and decisions: [docs/app.md](docs/app.md). Python + PySide6, jobs in a child process.
+- [ ] `--json` progress/result events and a versioned report schema
+- [ ] Windows in CI; path robustness (drive letters, long paths, Unicode, case)
+- [ ] Packaging spike: PyInstaller builds for all three platforms from CI (unsigned)
+- [ ] Drop & export: files, devices and reference, sync with progress, result table, export
+- [ ] Listen to a match (reference and file together)
+- [ ] Later: timeline view with confidence per clip, manual correction of wrong matches
+- [ ] Later, only on demand: signed builds, update hint
 
 ## Ideas
 - Sub-sample phase / polarity alignment of mics recording the same source
