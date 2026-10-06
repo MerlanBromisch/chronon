@@ -7,6 +7,7 @@ import dataclasses
 import json
 import sys
 import time
+import traceback
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -77,22 +78,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("scene", help="folder written by 'chronon synth'")
 
     args = parser.parse_args(argv)
+    out = _JsonOut() if getattr(args, "json", False) else None
     try:
         if args.command == "synth":
             return _synth(args)
         if args.command == "analyze":
-            return _analyze(args)
+            return _analyze(args, out)
         if args.command == "sync":
-            return _sync(args)
+            return _sync(args, out)
         if args.command == "correct":
-            return _correct(args)
+            return _correct(args, out)
         if args.command == "timeline":
             print(f"timeline: {correct.timeline(args.outdir, args.name)}")
             return 0
         if args.command == "eval":
             return _eval(args)
     except (audio.AudioError, ValueError) as e:
+        if out is not None:
+            out.emit("error", message=str(e))
+            return 1
         parser.exit(1, f"chronon: error: {e}\n")
+    except Exception as e:
+        if out is None:
+            raise
+        traceback.print_exc()
+        out.emit("error", message=f"{type(e).__name__}: {e}")
+        return 1
     return 2
 
 
@@ -111,6 +122,12 @@ def _ref_args(p: argparse.ArgumentParser, export: bool = True) -> None:
         "--separate",
         action="store_true",
         help="measure every file on its own instead of grouping them into devices",
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="machine-readable output for apps and scripts: one JSON object per line on "
+        "stdout (progress, result, error), see docs/app.md",
     )
     if export:
         p.add_argument(
@@ -143,11 +160,17 @@ def _synth(args: argparse.Namespace) -> int:
     return 0
 
 
-def _analyze(args: argparse.Namespace) -> int:
+def _analyze(args: argparse.Namespace, out: _JsonOut | None) -> int:
     refs, files = _refs_and_files(args)
-    progress = _Progress(["analysing"])
+    progress = _Progress(["analysing"], out)
     results = align.align_files(refs, files, progress=progress, separate=args.separate)
     progress.finish()
+    if out is not None:
+        rows = [
+            _analysis_row(path, r, len(refs) > 1) for path, r in zip(files, results, strict=True)
+        ]
+        out.emit("result", command="analyze", refs=[str(r) for r in refs], files=rows)
+        return 0
     print(f"reference: {', '.join(Path(r).name for r in refs)}")
     print(
         f"{'file':<24} {'device':<12} {'offset s':>13} {'drift ppm':>10} {'confidence':>10}"
@@ -164,9 +187,40 @@ def _analyze(args: argparse.Namespace) -> int:
     return 0
 
 
-def _correct(args: argparse.Namespace) -> int:
+def _analysis_row(path: str, r: align.FileResult, several_refs: bool) -> dict:
+    a = r.alignment
+    via = r.reference.name if several_refs and not r.is_reference else None
+    return {
+        "file": str(path),
+        "device": r.device,
+        "reference": str(r.reference),
+        "is_reference": r.is_reference,
+        "offset_s": a.offset_s,
+        "drift_ppm": a.drift_ppm,
+        "confidence": a.confidence,
+        "reliable": r.is_reference or a.reliable,
+        "inverted": a.inverted,
+        "wander_ms": a.wander_ms,
+        "windows_used": a.windows_used,
+        "windows_total": a.windows_total,
+        "via": _str(r.via),
+        "drift_from": _str(r.drift_from),
+        "linked_via": _str(r.linked_via),
+        "notes": ([] if r.is_reference else _notes(a, via)) + correct.result_notes(r),
+    }
+
+
+def _str(path: Path | None) -> str | None:
+    return None if path is None else str(path)
+
+
+def _timeline_path(args: argparse.Namespace) -> Path:
+    return Path(args.out) / ((args.name or Path(args.out).name) + ".fcpxml")
+
+
+def _correct(args: argparse.Namespace, out: _JsonOut | None) -> int:
     refs, files = _refs_and_files(args)
-    progress = _Progress(["analysing", "writing", "verifying"])
+    progress = _Progress(["analysing", "writing", "verifying"], out)
     outputs = correct.run(
         refs,
         files,
@@ -182,22 +236,41 @@ def _correct(args: argparse.Namespace) -> int:
         join=args.join,
     )
     progress.finish()
+    failed = [o for o in outputs if o.verified is False]
+    if out is not None:
+        out.emit(
+            "result",
+            command="correct",
+            report=str(Path(args.out) / "chronon-report.json"),
+            timeline=str(_timeline_path(args)),
+            failed=len(failed),
+            files=correct.report_rows(outputs),
+        )
+        return 1 if failed else 0
     print(correct.format_report(outputs))
     print(f"report: {Path(args.out) / 'chronon-report.txt'}")
-    failed = [o for o in outputs if o.verified is False]
     if failed:
         print(f"{len(failed)} file(s) failed verification", file=sys.stderr)
         return 1
     return 0
 
 
-def _sync(args: argparse.Namespace) -> int:
+def _sync(args: argparse.Namespace, out: _JsonOut | None) -> int:
     refs, files = _refs_and_files(args)
-    progress = _Progress(["analysing"])
+    progress = _Progress(["analysing"], out)
     result = correct.sync(
         refs, files, args.out, progress, args.all_refs, args.name, separate=args.separate
     )
     progress.finish()
+    if out is not None:
+        out.emit(
+            "result",
+            command="sync",
+            report=str(Path(args.out) / "chronon-sync.json"),
+            timeline=str(_timeline_path(args)),
+            files=[dataclasses.asdict(r) for r in result],
+        )
+        return 0
     print(f"{'file':<28} {'timeline s':>12} {'drift ppm':>10} {'off at ends':>12}  notes")
     for r in result:
         notes = ([] if r.reliable else ["NO RELIABLE MATCH"]) + r.notes
@@ -205,39 +278,73 @@ def _sync(args: argparse.Namespace) -> int:
             f"{Path(r.source).name:<28} {r.position_s:>12.6f} {r.drift_ppm:>+10.2f} "
             f"{r.error_ms:>9.1f} ms  {', '.join(notes)}"
         )
-    print(f"timeline: {Path(args.out) / ((args.name or Path(args.out).name) + '.fcpxml')}")
+    print(f"timeline: {_timeline_path(args)}")
     return 0
 
 
+class _JsonOut:
+    """``--json``: one JSON object per line on stdout, flushed at once (see docs/app.md)."""
+
+    VERSION = 1
+
+    def __init__(self):
+        # A windowed (no console) app on Windows can start its child with sys.stdout = None
+        # even though it passed a pipe; fd 1 is still that pipe.
+        self.stream = sys.stdout
+        if self.stream is None:
+            self.stream = open(1, "w", encoding="utf-8", closefd=False)  # noqa: SIM115
+
+    def emit(self, event: str, **fields) -> None:
+        self.stream.write(json.dumps({"v": self.VERSION, "event": event, **fields}) + "\n")
+        self.stream.flush()
+
+
 class _Progress:
-    """One status line on a terminal: step, percentage and time left in this step.
+    """Step, percentage and time left in this step: one status line on a terminal, or
+    progress events (at most ten a second) with ``--json``.
 
     The time left is extrapolated from the rate of real work done so far (seconds of
     audio analysed, samples written, files checked), not from a guess."""
 
-    def __init__(self, steps: Sequence[str]):
+    def __init__(self, steps: Sequence[str], out: _JsonOut | None = None):
         self.steps = list(steps)
         self.step = ""
         self.started = 0.0
-        self.tty = sys.stderr.isatty()
+        self.sent = 0.0
+        self.out = out
+        self.tty = out is None and sys.stderr.isatty()
 
     def __call__(self, what: str, done: int, total: int) -> None:
-        if not self.tty:
+        if not self.tty and self.out is None:
             return
         step = what.split(" ")[0]
         now = time.monotonic()
         if step != self.step:
-            if self.step:
+            if self.step and self.tty:
                 print(file=sys.stderr)
-            self.step, self.started = step, now
+            self.step, self.started, self.sent = step, now, 0.0
         elapsed = now - self.started
         frac = done / total if total else 1.0
-        left = ""
-        if 0 < frac < 1 and elapsed > 1.5:
-            left = f"  about {_duration(elapsed * (1 - frac) / frac)} left"
+        left = elapsed * (1 - frac) / frac if 0 < frac < 1 and elapsed > 1.5 else None
         number = self.steps.index(step) + 1 if step in self.steps else 0
+        if self.out is not None:
+            if frac < 1 and self.sent and now - self.sent < 0.1:
+                return
+            self.sent = now
+            self.out.emit(
+                "progress",
+                step=step,
+                step_number=number,
+                steps=len(self.steps),
+                what=what,
+                done=frac,
+                left_s=left,
+            )
+            return
         prefix = f"[{number}/{len(self.steps)}] " if number else ""
-        line = f"{prefix}{what}: {100 * frac:3.0f} %{left}"
+        line = f"{prefix}{what}: {100 * frac:3.0f} %"
+        if left is not None:
+            line += f"  about {_duration(left)} left"
         print(f"\r{line:<78}", end="", file=sys.stderr, flush=True)
 
     def finish(self) -> None:
