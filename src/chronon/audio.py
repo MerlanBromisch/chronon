@@ -55,7 +55,8 @@ def probe(path: Path | str) -> Info:
         "json",
         str(path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # ffprobe writes UTF-8; text=True would decode with the locale (cp1252 on Windows)
+    result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         raise AudioError(f"cannot read {path}: {result.stderr.strip()}")
     data = json.loads(result.stdout)

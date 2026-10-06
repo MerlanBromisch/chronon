@@ -101,7 +101,7 @@ from before 2026-10-05 are a bare list of rows (schema 0) and stay readable
 
 ## Prerequisites in the core
 - [x] `--json` mode for `analyze`, `sync`, `correct` (contract above) and a versioned report schema
-- [ ] Windows in CI; path robustness (drive letters, long paths, Unicode normalisation, case-
+- [x] Windows in CI; path robustness (drive letters, long paths, Unicode normalisation, case-
       insensitive file systems), including the originals check (compare real paths / same file)
 - [ ] Small API for listening: a mono/stereo excerpt of a file at reference time *t*, using
       the measured alignment
