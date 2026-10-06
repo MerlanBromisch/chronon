@@ -17,7 +17,7 @@ These apply to every stage and decide trade-offs.
   a clear "no reliable match" instead of a made-up number.
 
 ## Stage 1 — Core (CLI)
-- [x] Project setup (uv, pytest, ruff, CI on Linux + macOS)
+- [x] Project setup (uv, pytest, ruff, CI on Linux, macOS and Windows)
 - [x] Synthetic test scenarios with known offset / drift (`chronon synth`)
 - [x] Decode audio from any audio/video file (ffmpeg)
 - [x] Coarse offset search on downsampled audio, sample-accurate refinement
@@ -53,7 +53,7 @@ These apply to every stage and decide trade-offs.
 ## Stage 3 — Desktop app (macOS, Windows, Linux)
 Concept and decisions: [docs/app.md](docs/app.md). Python + PySide6, jobs in a child process.
 - [x] `--json` progress/result events and a versioned report schema
-- [ ] Windows in CI; path robustness (drive letters, long paths, Unicode, case)
+- [x] Windows in CI; path robustness (drive letters, long paths, Unicode, case)
 - [x] Packaging spike: PyInstaller builds for all three platforms from CI (unsigned) — branch `spike/packaging`
 - [ ] Drop & export: files, devices and reference, sync with progress, result table, export
 - [ ] Listen to a match (reference and file together)
