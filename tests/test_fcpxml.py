@@ -101,7 +101,7 @@ def _scene(tmp_path):
             str(media / "cam_01.wav"),
             "-shortest",
             "-c:v",
-            "libx264",
+            "mpeg4",  # in every ffmpeg build (libx264 is missing from LGPL ones)
             "-c:a",
             "pcm_s24le",
             "-timecode",
@@ -244,7 +244,7 @@ def _video_file(path: Path, drop_half_after: float | None) -> Path:
             "sine=f=440:d=20",
             *(vf if drop_half_after else []),
             "-c:v",
-            "libx264",
+            "mpeg4",  # in every ffmpeg build (libx264 is missing from LGPL ones)
             "-c:a",
             "aac",
             "-shortest",
