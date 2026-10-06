@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import threading
+import unicodedata
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -257,7 +258,7 @@ def timeline(outdir: Path | str, name: str | None = None) -> Path:
 
 def read_report(path: Path | str) -> list[dict]:
     """The file rows of a chronon-report.json or chronon-sync.json, any schema so far."""
-    data = json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
     if isinstance(data, list):
         return data
     if data.get("schema", 0) > REPORT_SCHEMA:
@@ -275,7 +276,7 @@ def report_rows(outputs: Sequence[Output]) -> list[dict]:
 
 def _write_json(path: Path, kind: str, rows: list[dict]) -> None:
     data = {"schema": REPORT_SCHEMA, "chronon": __version__, "kind": kind, "files": rows}
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def _output_from_row(row: dict) -> Output:
@@ -343,7 +344,9 @@ def plan(
         if joinable:
             by_device[r.device] = groups[-1]
     names = _output_names([g[0][0] for g in groups])
-    names = [g[0][1].device if len(g) > 1 else n for g, n in zip(groups, names, strict=True)]
+    names = _unique(
+        [g[0][1].device if len(g) > 1 else n for g, n in zip(groups, names, strict=True)]
+    )
     outputs = []
     for group, name in zip(groups, names, strict=True):
         outputs.append(_plan_output(group, name, zero, outdir, rate, pad, fmt, overwrite))
@@ -572,7 +575,7 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
 
 def write_report(outputs: Sequence[Output], outdir: Path) -> None:
     _write_json(outdir / "chronon-report.json", "correct", report_rows(outputs))
-    (outdir / "chronon-report.txt").write_text(format_report(outputs) + "\n")
+    (outdir / "chronon-report.txt").write_text(format_report(outputs) + "\n", encoding="utf-8")
 
 
 def format_report(outputs: Sequence[Output]) -> str:
@@ -611,21 +614,39 @@ def _with_last(blocks):
 
 def _output_names(sources: Sequence[Path]) -> list[str]:
     """File stems, made unique with the parent folder name where needed."""
-    stems = [s.stem for s in sources]
-    names = []
-    for s, stem in zip(sources, stems, strict=True):
-        name = stem if stems.count(stem) == 1 else f"{s.parent.name}_{stem}"
-        base, n = name, 2
-        while name in names:
+    keys = [_name_key(s.stem) for s in sources]
+    return _unique(
+        [
+            s.stem if keys.count(k) == 1 else f"{s.parent.name}_{s.stem}"
+            for s, k in zip(sources, keys, strict=True)
+        ]
+    )
+
+
+def _unique(names: Sequence[str]) -> list[str]:
+    """Names numbered where two would be the same file on a case-insensitive file system."""
+    out, taken = [], set()
+    for base in names:
+        name, n = base, 2
+        while _name_key(name) in taken:
             name, n = f"{base}_{n}", n + 1
-        names.append(name)
-    return names
+        taken.add(_name_key(name))
+        out.append(name)
+    return out
+
+
+def _name_key(name: str) -> str:
+    """Names macOS and Windows treat as the same file: case and Unicode form ignored."""
+    return unicodedata.normalize("NFC", name).casefold()
 
 
 def _check_outdir(outdir: Path, inputs: Sequence[Path]) -> None:
-    out = outdir.resolve()
+    # Compare folders on disk, not path strings: case-insensitive file systems (macOS,
+    # Windows), Unicode normalisation (macOS), symlinks, short names, drive mappings.
+    if not outdir.exists():
+        return  # a new folder holds no input
     for p in inputs:
-        if p.resolve().parent == out:
+        if p.parent.exists() and os.path.samefile(p.parent, outdir):
             raise CorrectError(
                 f"output folder {outdir} holds the input {p.name}; choose a separate folder "
                 "(originals are never written next to)"

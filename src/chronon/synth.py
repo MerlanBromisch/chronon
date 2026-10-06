@@ -261,7 +261,7 @@ def write(scenario: Scenario, outdir: Path | str) -> Path:
     for rc in rendered:
         wavfile.write(outdir / rc.filename, rc.device.sample_rate, rc.audio)
     truth_path = outdir / TRUTH_FILE
-    truth_path.write_text(json.dumps(truth(scenario, rendered), indent=2) + "\n")
+    truth_path.write_text(json.dumps(truth(scenario, rendered), indent=2) + "\n", encoding="utf-8")
     return truth_path
 
 

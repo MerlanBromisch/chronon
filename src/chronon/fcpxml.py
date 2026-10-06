@@ -85,7 +85,7 @@ class Placed:
 def write(items: list[Item], path: Path | str, name: str) -> list[Placed]:
     """Write the timeline; return the placements (for reporting)."""
     placed = place(items)
-    Path(path).write_text(render(placed, name))
+    Path(path).write_text(render(placed, name), encoding="utf-8")
     return placed
 
 
@@ -245,7 +245,11 @@ def _group(item: Item) -> str:
 def probe(path: Path | str) -> Media:
     info = audio.probe(path)
     cmd = ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)]
-    data = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout)
+    data = json.loads(
+        subprocess.run(
+            cmd, capture_output=True, check=True, encoding="utf-8", errors="replace"
+        ).stdout
+    )
     streams, fmt_tags = data["streams"], data.get("format", {}).get("tags", {})
     video = next(
         (

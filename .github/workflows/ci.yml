@@ -8,14 +8,25 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - name: Install ffmpeg
         run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg; else sudo apt-get update && sudo apt-get install -y ffmpeg; fi
+          case "$RUNNER_OS" in
+            macOS) brew install ffmpeg ;;
+            Linux) sudo apt-get update && sudo apt-get install -y ffmpeg ;;
+            Windows)
+              curl -fsSL -o "$RUNNER_TEMP/ffmpeg.zip" https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip
+              unzip -q "$RUNNER_TEMP/ffmpeg.zip" -d "$RUNNER_TEMP"
+              cygpath -w "$(ls -d "$RUNNER_TEMP"/ffmpeg-*/bin)" >> "$GITHUB_PATH" ;;
+          esac
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .

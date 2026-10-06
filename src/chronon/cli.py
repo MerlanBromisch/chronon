@@ -78,6 +78,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("scene", help="folder written by 'chronon synth'")
 
     args = parser.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):
+        # file names a Windows console code page cannot show must not stop a run
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     out = _JsonOut() if getattr(args, "json", False) else None
     try:
         if args.command == "synth":
@@ -149,7 +153,7 @@ def _synth(args: argparse.Namespace) -> int:
     if args.signal:
         scenario = dataclasses.replace(scenario, signal=args.signal)
     truth_path = synth.write(scenario, args.outdir)
-    truth = json.loads(truth_path.read_text())
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
     for device in truth["devices"]:
         for clip in device["clips"]:
             print(
@@ -374,7 +378,7 @@ def _notes(a: align.Alignment, via: str | None) -> list[str]:
 
 def _eval(args: argparse.Namespace) -> int:
     scene = Path(args.scene)
-    truth = json.loads((scene / synth.TRUTH_FILE).read_text())
+    truth = json.loads((scene / synth.TRUTH_FILE).read_text(encoding="utf-8"))
     ref_dev = truth["devices"][0]
     ref_clip = ref_dev["clips"][0]
     others = [(d, c) for d in truth["devices"] for c in d["clips"] if c is not ref_clip]

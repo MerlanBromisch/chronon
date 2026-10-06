@@ -94,7 +94,7 @@ def main() -> int:
         "peak_ffmpeg_mb": round(kids),
     }
     print(json.dumps(result, indent=2))
-    with open(Path(__file__).with_name("bench-results.jsonl"), "a") as f:
+    with open(Path(__file__).with_name("bench-results.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(result) + "\n")
     if not args.out:
         shutil.rmtree(out, ignore_errors=True)
