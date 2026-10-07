@@ -66,6 +66,23 @@ events today have `step` = `analysing` and a free-text `what`. Needed:
 
 ## 2. Open questions in the design
 
+**Decided 2026-10-07** (design changes in `revision-1.md`):
+1. Corrected files are named `<device>_korrigiert.<ext>` (core change: suffix).
+2. CAF outputs end in `.caf`; board 14 gets fixed.
+3. Audio format: Automatisch / WAV / CAF, default Automatisch. RF64 later (#15).
+4. Version 1 includes renaming and reordering devices, naming tracks, and regrouping files
+   (move, split, merge). Core change: a device description the analysis accepts instead of
+   automatic grouping, with names and order that reach file names and the FCPXML.
+5. Suggested reference = the device covering the most time; its loudest tracks preselected.
+6. Only "Im Finder zeigen" (Explorer / Dateimanager on Windows / Linux), no "open in Final Cut".
+7. Padding is a checkbox in the export form (default on). Also in the form: sample rate
+   (default 48 kHz) and project name (default output folder name). Bit depth stays the source's.
+8. Step 5 lists every file, with its verdict badge; files that need checking first.
+9. Appearance: follow the system, plus a setting System / Hell / Dunkel.
+
+Original questions, for reference:
+
+
 1. **Output file names:** the boards show `ZOOM_korrigiert.wav`; the core writes `ZOOM.wav`
    (device or file name). Pick one; a suffix is easy to add.
 2. **Board 14:** `x32_korrigiert.wav` with the note "Als CAF geschrieben" is a contradiction. A CAF
