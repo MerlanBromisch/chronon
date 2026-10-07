@@ -11,7 +11,18 @@ import traceback
 from collections.abc import Sequence
 from pathlib import Path
 
-from chronon import __version__, align, analysis, audio, correct, devices, fcpxml, messages, synth
+from chronon import (
+    __version__,
+    align,
+    analysis,
+    audio,
+    correct,
+    devices,
+    fcpxml,
+    listen,
+    messages,
+    synth,
+)
 from chronon.messages import note
 
 
@@ -104,6 +115,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("outdir", help="output folder of the earlier run")
     p.add_argument("--name", help="project name (default: the folder's name)")
 
+    p = commands.add_parser(
+        "overview", help="waveform overviews (min/max peaks) of whole files, cached on disk"
+    )
+    p.add_argument("files", nargs="+", help="recordings")
+    p.add_argument("--cache", required=True, metavar="DIR", help="cache folder for the overviews")
+    p.add_argument("--json", action="store_true", help="machine-readable output (docs/app.md)")
+
     p = commands.add_parser("eval", help="run analyze on a 'chronon synth' folder and compare")
     p.add_argument("scene", help="folder written by 'chronon synth'")
 
@@ -127,6 +145,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "timeline":
             print(f"timeline: {correct.timeline(args.outdir, args.name)}")
             return 0
+        if args.command == "overview":
+            return _overview(args, out)
         if args.command == "eval":
             return _eval(args)
     except (audio.AudioError, ValueError) as e:
@@ -424,6 +444,28 @@ def _sync(args: argparse.Namespace, out: _JsonOut | None) -> int:
             f"{r.error_ms:>9.1f} ms  {messages.texts(notes)}"
         )
     print(f"timeline: {_timeline_path(args)}")
+    return 0
+
+
+def _overview(args: argparse.Namespace, out: _JsonOut | None) -> int:
+    progress = _Progress(["overview"], out)
+    rows = []
+    for f in args.files:
+        peaks = listen.overview(f, args.cache, progress)
+        rows.append(
+            {
+                "file": str(f),
+                "overview": str(listen.overview_path(f, args.cache)),
+                "peaks_per_s": listen.PEAKS_PER_S,
+                "peaks": len(peaks),
+            }
+        )
+    progress.finish()
+    if out is not None:
+        out.emit("result", command="overview", files=rows)
+        return 0
+    for row in rows:
+        print(f"{Path(row['file']).name}: {row['overview']}")
     return 0
 
 

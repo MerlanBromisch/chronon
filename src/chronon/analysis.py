@@ -40,6 +40,11 @@ class Analysis:
     layout: devices.Layout | None = None  # the devices (names, order) the analysis used
 
     @property
+    def timeline_zero(self) -> float:
+        """Reference time of the timeline's start: the earliest start of any file."""
+        return min(0.0, *(r.alignment.offset_s for _, r in self.entries()))
+
+    @property
     def reference_name(self) -> str:
         return self.layout.devices[self.layout.reference].name if self.layout else "reference"
 
@@ -145,7 +150,7 @@ def measure(
 def _preview(a: Analysis) -> tuple[Fraction, list[dict]]:
     """Where each file lands on a timeline of the originals (as ``sync`` writes it)."""
     entries = a.entries()
-    zero = min(0.0, *(r.alignment.offset_s for _, r in entries))
+    zero = a.timeline_zero
     items = [
         fcpxml.Item(
             f,

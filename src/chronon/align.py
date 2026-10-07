@@ -114,6 +114,10 @@ class Alignment:
         """Reference file time of the other file's time ``t``."""
         return self.offset_s + t / (1 + self.drift_ppm * 1e-6)
 
+    def file_time(self, ref_t: float | np.ndarray) -> float | np.ndarray:
+        """The other file's time at reference file time ``ref_t`` (inverse of ``ref_time``)."""
+        return (ref_t - self.offset_s) * (1 + self.drift_ppm * 1e-6)
+
 
 @dataclass(frozen=True)
 class _Match:

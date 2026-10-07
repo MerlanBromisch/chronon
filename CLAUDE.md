@@ -16,6 +16,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `--json` on analyze/sync/correct — JSON lines for the desktop app (contract in `docs/app.md`; change it only with a version bump)
 - `uv run chronon devices FILE... --save D.json` — devices before a reference exists + suggested reference; edit D.json (names, order, grouping, track names, reference), then `chronon analyze --devices D.json`
 - `uv run chronon analyze ... --save A.json`, then `chronon sync|correct --analysis A.json -o OUTDIR` — export without analysing again (refused if a source changed)
+- `uv run chronon overview FILE... --cache DIR` — waveform overviews (min/max peaks) for the app, cached
 - `correct --timeline fcpxml|none`, `sync|correct --fps 29.97` — timeline format (none = audio only; Premiere/Resolve later) / frame rate
 
 ## Layout
@@ -26,6 +27,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `correct.py` — corrected audio export (libsoxr at the real rate, libsndfile WAV/CAF, streamed) + verification + report
 - `fcpxml.py` — FCPXML 1.11 timeline (frame-aligned offsets, sample-accurate trims, asset start = timecode/BWF)
 - `synth.py` — synthetic scenarios with ground truth
+- `listen.py` — listening and waveforms: reference time ↔ file time (`Timeline`), excerpt pairs, cached peak overviews
 - `messages.py` — notes and user-fixable errors as codes (the app translates; English texts here)
 - `cli.py` — `chronon` command
 
