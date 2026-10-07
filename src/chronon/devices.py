@@ -57,7 +57,7 @@ class Device:
 
     def track_label(self, path: Path) -> str:
         """A parallel track's name, or its number within its clip (1 = first)."""
-        # compared as paths, not text: a layout may spell them with / or \\
+        # compared as paths, not text: a layout may spell them with / or \
         names = {Path(k): v for k, v in self.track_names.items()}
         name = names.get(Path(path), "").strip()
         if name:
