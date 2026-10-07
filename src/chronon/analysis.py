@@ -18,13 +18,13 @@ from dataclasses import asdict, dataclass, field, fields
 from fractions import Fraction
 from pathlib import Path
 
-from chronon import __version__, align, devices, fcpxml
+from chronon import __version__, align, devices, fcpxml, messages
 
 SCHEMA = 1  # bump when a field changes meaning or goes away
 Progress = Callable[[str, int, int], None]
 
 
-class AnalysisError(ValueError):
+class AnalysisError(messages.UserError, ValueError):
     pass
 
 
@@ -62,9 +62,17 @@ class Analysis:
         """Refuse an analysis whose files changed (or vanished) since it was made."""
         for path in dict.fromkeys(self.refs + self.files):
             if not path.exists():
-                raise AnalysisError(f"{path} is missing; it was part of the analysis")
+                raise AnalysisError(
+                    f"{path} is missing; it was part of the analysis",
+                    "source_missing",
+                    file=str(path),
+                )
             if _stamp(path) != self.stamps.get(str(path)):
-                raise AnalysisError(f"{path.name} changed since the analysis; analyse again")
+                raise AnalysisError(
+                    f"{path.name} changed since the analysis; analyse again",
+                    "source_changed",
+                    file=str(path),
+                )
 
     def save(self, path: Path | str) -> Path:
         data = {

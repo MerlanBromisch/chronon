@@ -101,12 +101,14 @@ def test_changed_or_missing_sources_refuse_the_export(tmp_path):
 
     st = os.stat(cam)
     os.utime(cam, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
-    with pytest.raises(analysis.AnalysisError, match="changed since the analysis"):
+    with pytest.raises(analysis.AnalysisError, match="changed since the analysis") as e:
         correct.sync([], [], tmp_path / "out", measured=analysis.Analysis.load(saved))
+    assert e.value.code == "source_changed" and e.value.fields == {"file": str(cam)}
 
     cam.unlink()
-    with pytest.raises(analysis.AnalysisError, match="missing"):
+    with pytest.raises(analysis.AnalysisError, match="missing") as e:
         correct.run([], [], tmp_path / "out", measured=analysis.Analysis.load(saved))
+    assert e.value.code == "source_missing"
 
 
 def test_files_and_analysis_do_not_mix(tmp_path, capsys):

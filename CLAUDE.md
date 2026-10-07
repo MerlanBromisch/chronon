@@ -26,6 +26,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `correct.py` — corrected audio export (libsoxr at the real rate, libsndfile WAV/CAF, streamed) + verification + report
 - `fcpxml.py` — FCPXML 1.11 timeline (frame-aligned offsets, sample-accurate trims, asset start = timecode/BWF)
 - `synth.py` — synthetic scenarios with ground truth
+- `messages.py` — notes and user-fixable errors as codes (the app translates; English texts here)
 - `cli.py` — `chronon` command
 
 ## Conventions

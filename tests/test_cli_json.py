@@ -5,8 +5,8 @@ import shutil
 
 import pytest
 
-from chronon import correct, synth
-from chronon.cli import main
+from chronon import correct, messages, synth
+from chronon.cli import _JsonOut, main
 from chronon.synth import Clip, Device, Scenario
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
@@ -29,9 +29,9 @@ def _scene(tmp_path):
 
 
 def _events(capsys) -> list[dict]:
-    """Every stdout line must be one JSON object of contract version 1."""
+    """Every stdout line must be one JSON object of the current contract version."""
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert events and all(e["v"] == 1 for e in events)
+    assert events and all(e["v"] == _JsonOut.VERSION == 2 for e in events)
     return events
 
 
@@ -87,9 +87,40 @@ def test_errors_are_events(tmp_path, capsys):
     assert main(["correct", "--json", str(rec), str(cam), "-o", str(rec.parent)]) == 1
     (event,) = _events(capsys)
     assert event["event"] == "error" and "original" in event["message"].lower()
+    assert event["code"] == "outdir_holds_input"
+    assert event["folder"] == str(rec.parent) and event["file"] in {str(rec), str(cam)}
 
-    assert main(["analyze", "--json", str(rec), str(tmp_path / "missing.wav")]) == 1
-    assert _events(capsys)[-1]["event"] == "error"
+    missing = tmp_path / "missing.wav"
+    assert main(["analyze", "--json", str(rec), str(missing)]) == 1
+    event = _events(capsys)[-1]
+    assert event["event"] == "error"
+    assert event["code"] == "unreadable_file" and event["file"] == str(missing)
+
+    assert main(["analyze", "--json", str(rec)]) == 1  # a usage error has no code
+    event = _events(capsys)[-1]
+    assert event["code"] is None and event["message"]
+
+
+def test_notes_are_codes(tmp_path, capsys):
+    rec, cam = _scene(tmp_path)
+    out = tmp_path / "out"
+    assert main(["correct", "--json", str(rec), str(cam), "-o", str(out)]) == 0
+    rec_row, cam_row = _events(capsys)[-1]["files"]
+    assert rec_row["notes"] == [{"code": "reference_clock"}]
+    assert all(set(n) >= {"code"} and n["code"] in messages.TEXTS for n in cam_row["notes"])
+
+    # the terminal builds its text from the same codes
+    assert messages.text({"code": "measured_via", "file": str(cam)}) == f"measured via {cam.name}"
+    assert messages.text({"code": "clock_wanders", "ms": 1.84}) == "clock wanders ±1.8 ms"
+
+
+def test_every_note_code_has_a_text():
+    for code, text in messages.TEXTS.items():
+        n = {"code": code, "file": "/a/b.wav", "files": ["/a/b.wav"], "ms": 1.0}
+        n |= {"reason": "r", "text": "t"}
+        assert text(n)
+    with pytest.raises(KeyError):
+        messages.note("no_such_code")
 
 
 def test_timeline_reads_old_unversioned_reports(tmp_path, capsys):
@@ -97,9 +128,14 @@ def test_timeline_reads_old_unversioned_reports(tmp_path, capsys):
     out = tmp_path / "out"
     assert main(["sync", str(rec), str(cam), "-o", str(out)]) == 0
     report = out / "chronon-sync.json"
-    report.write_text(json.dumps(correct.read_report(report)))  # schema 0: a bare list
+    rows = correct.read_report(report)
+    rows[0]["notes"] = ["same clock and start as the reference"]  # notes were text before
+    report.write_text(json.dumps(rows))  # schema 0: a bare list
     assert main(["timeline", str(out), "--name", "again"]) == 0
     assert (out / "again.fcpxml").exists()
+    assert correct.read_report(report)[0]["notes"] == [
+        {"code": "text", "text": "same clock and start as the reference"}
+    ]
 
     report.write_text(json.dumps({"schema": correct.REPORT_SCHEMA + 1, "files": []}))
     with pytest.raises(correct.CorrectError, match="newer"):

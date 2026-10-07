@@ -221,7 +221,8 @@ def test_joined_camera_audio_keeps_every_video_clip(tmp_path):
     videos = [c for c in root.iter("asset-clip") if c.get("srcEnable") == "video"]
     assert sorted(c.get("name") for c in videos) == ["cam", "cam2"]
     joined = next(o for o in outputs if len(o.segments) == 2)
-    assert sum("video placed" in n for n in joined.notes) == 2
+    placed = [n for n in joined.notes if n["code"] == "video_placed"]
+    assert sorted(Path(n["file"]).name for n in placed) == [video.name, second.name]
 
 
 def _video_file(path: Path, drop_half_after: float | None) -> Path:

@@ -47,18 +47,21 @@ chronon (core, unchanged)  ←  chronon.gui (PySide6, optional extra: uv sync --
 - The "never write next to the originals" rule stays in the core (`correct`), the GUI only
   repeats the check early to show a clear message.
 
-### `--json` contract (version 1)
+### `--json` contract (version 2)
 `chronon analyze|sync|correct --json …` writes one JSON object per line to stdout and
-nothing else; tracebacks of unexpected errors go to stderr. Every object has `"v": 1` (bumped
+nothing else; tracebacks of unexpected errors go to stderr. Every object has `"v": 2` (bumped
 when a field changes meaning or goes away; new fields may appear any time) and `"event"`:
 
 ```json
-{"v": 1, "event": "progress", "step": "writing", "step_number": 2, "steps": 3,
+{"v": 2, "event": "progress", "step": "writing", "step_number": 2, "steps": 3,
  "what": "writing", "done": 0.42, "left_s": 18.5}
-{"v": 1, "event": "result", "command": "correct", "report": "…/chronon-report.json",
+{"v": 2, "event": "result", "command": "correct", "report": "…/chronon-report.json",
  "timeline": "…/Show.fcpxml", "failed": 0, "files": [ … ]}
-{"v": 1, "event": "error", "message": "…"}
+{"v": 2, "event": "error", "code": "not_enough_space", "message": "needs 3.1 GiB but …",
+ "folder": "…", "need_bytes": 3328599654, "free_bytes": 1073741824}
 ```
+Version 2 (2026-10-07): `notes` are objects with a code, errors carry a code (below).
+Version 1 had English sentences in both.
 - `progress`: `step` is one of the command's steps (`analysing`; `correct`: `analysing`,
   `writing`, `verifying`), `what` the detail (e.g. `analysing ZOOM0003.WAV`), `done` 0…1 within
   the step, `left_s` the time left in the step or `null` while it cannot be estimated yet (before 3 % is done). Measured
@@ -82,13 +85,52 @@ when a field changes meaning or goes away; new fields may appear any time) and `
   `sync` / `correct --analysis A.json` export from it without measuring again (the app's Sync
   step, then its Export step). The file stores each source's size and modification time; a
   changed or missing source is an `error`.
-- `error`: the run stopped (exit code 1); `message` is meant for the user.
+- `notes` (rows of every command and of the report files): a list of objects
+  `{"code": …, …fields}`, translated by the app; the terminal builds its English text from the
+  same codes (`chronon.messages.TEXTS`). Paths are full paths; the texts show the file name.
+
+  | code | fields | meaning |
+  |---|---|---|
+  | `no_reliable_match` | | position and drift may be wrong |
+  | `inverted` | | polarity inverted against the reference |
+  | `clock_wanders` | `ms` | the clock wanders ±`ms` around the straight line |
+  | `matched_track` | `file` | best match among several reference tracks |
+  | `reference_clock` | | a reference track: same clock and start as the reference |
+  | `measured_via` | `file` | parallel track whose measurement this file shares |
+  | `drift_from` | `file` | clip too short / weak: drift borrowed from this sibling clip |
+  | `linked_via` | `file` | no reliable overlap with the reference; placed through this file |
+  | `joined` | `files` | `--join`: these clips in one output |
+  | `wav_over_2gib` | | WAV over 2 GiB: a few programs may not read it |
+  | `caf_over_2gib` | | written as CAF because it is over 2 GiB |
+  | `caf_no_time_stamp` | | CAF holds no time stamp: place it from the timeline file |
+  | `video_unchanged` | | audio of a video file; the video itself is not changed |
+  | `video_placed` | `ms`, `file`? | video placed within ±`ms` (`file`: which clip of a joined output) |
+  | `variable_frame_rate` | `file`? | variable frame rate: check picture against sound at the end |
+  | `not_verifiable` | `reason` | verification could not measure (`reason`: English text) |
+  | `verification_failed` | | output is not in sync with the reference |
+  | `verification_failed_via` | `file` | its parallel track `file` failed verification |
+  | `text` | `text` | a note of a report written before codes (schema < 2) |
+- `error`: the run stopped (exit code 1); `message` is English text. `code` is set for errors
+  the user can fix, with its fields next to it; `null` otherwise (show `message`).
+
+  | code | fields |
+  |---|---|
+  | `ffmpeg_missing` | `tool` |
+  | `unreadable_file` | `file`, `detail` (ffmpeg's message) |
+  | `no_audio` | `file` |
+  | `outdir_holds_input` | `folder`, `file` |
+  | `not_enough_space` | `folder`, `need_bytes`, `free_bytes` |
+  | `output_exists` | `file` |
+  | `too_large_for_wav` | `file`, `bytes` |
+  | `source_missing` | `file` (a saved analysis' source is gone) |
+  | `source_changed` | `file` (changed since the analysis) |
 - Files without a reliable match are not errors: their row says `"reliable": false`.
 
 Report files (`chronon-report.json`, `chronon-sync.json`) are
-`{"schema": 1, "chronon": "<version>", "kind": "correct"|"sync", "files": [rows]}`. Reports
+`{"schema": 2, "chronon": "<version>", "kind": "correct"|"sync", "files": [rows]}`. Reports
 from before 2026-10-05 are a bare list of rows (schema 0) and stay readable
-(`correct.read_report`).
+(`correct.read_report`). Schema 2 (2026-10-07): notes are codes; `read_report` turns the text
+notes of older reports into `{"code": "text", "text": …}`.
 
 ## Version 1 screens
 1. **Drop** — files and folders; per file: duration, rate, channels, timecode / BWF start.

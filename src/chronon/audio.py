@@ -18,11 +18,13 @@ import soundfile as sf
 import soxr
 from scipy import signal as sps
 
+from chronon import messages
+
 RESAMPLE_QUALITY = "HQ"
 EXCERPT_PAD_S = 0.05  # extra audio read on both sides of an excerpt for the resampler
 
 
-class AudioError(RuntimeError):
+class AudioError(messages.UserError, RuntimeError):
     pass
 
 
@@ -58,12 +60,17 @@ def probe(path: Path | str) -> Info:
     # ffprobe writes UTF-8; text=True would decode with the locale (cp1252 on Windows)
     result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
-        raise AudioError(f"cannot read {path}: {result.stderr.strip()}")
+        raise AudioError(
+            f"cannot read {path}: {result.stderr.strip()}",
+            "unreadable_file",
+            file=str(path),
+            detail=result.stderr.strip(),
+        )
     data = json.loads(result.stdout)
     streams = data.get("streams", [])
     audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
     if not audio_streams:
-        raise AudioError(f"{path} has no audio stream")
+        raise AudioError(f"{path} has no audio stream", "no_audio", file=str(path))
     a = audio_streams[0]
     rate = int(a["sample_rate"])
     bits = int(a.get("bits_per_raw_sample") or a.get("bits_per_sample") or 0)
@@ -123,7 +130,9 @@ def stream(path: Path | str, channels: int, block_frames: int = 1 << 16) -> Iter
             yield np.frombuffer(buf[:usable], dtype="<f4").reshape(-1, channels)
         err = proc.stderr.read().decode(errors="replace").strip()
         if proc.wait() != 0:
-            raise AudioError(f"cannot decode {path}: {err}")
+            raise AudioError(
+                f"cannot decode {path}: {err}", "unreadable_file", file=str(path), detail=err
+            )
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -133,7 +142,11 @@ def stream(path: Path | str, channels: int, block_frames: int = 1 << 16) -> Iter
 def _tool(name: str) -> str:
     exe = shutil.which(name)
     if exe is None:
-        raise AudioError(f"{name} not found; install ffmpeg (e.g. 'brew install ffmpeg')")
+        raise AudioError(
+            f"{name} not found; install ffmpeg (e.g. 'brew install ffmpeg')",
+            "ffmpeg_missing",
+            tool=name,
+        )
     return exe
 
 
@@ -162,7 +175,10 @@ def load(path: Path | str, rate: int) -> np.ndarray:
     ]
     result = subprocess.run(cmd, capture_output=True)
     if result.returncode != 0:
-        raise AudioError(f"cannot decode {path}: {result.stderr.decode(errors='replace').strip()}")
+        err = result.stderr.decode(errors="replace").strip()
+        raise AudioError(
+            f"cannot decode {path}: {err}", "unreadable_file", file=str(path), detail=err
+        )
     return np.frombuffer(result.stdout, dtype="<f4").copy()
 
 

@@ -14,7 +14,8 @@ this file when it is out of date.
   - `chronon sync|correct --analysis A.json` export without measuring again; a changed or
     missing source is refused.
   - `--json` on devices/analyze/sync/correct: JSON lines for the desktop app. The contract is in
-    `docs/app.md`; change it only with a version bump.
+    `docs/app.md`; change it only with a version bump. Version 2: `notes` and user-fixable
+    errors are codes (`chronon.messages`), the app translates them; reports are schema 2.
   - Progress is weighted by real work (reference decoding counts, decoded files weigh 1.7×).
   - Export: `<device>[_<track>|_<file>]_korrigiert.<wav|caf>`, bit depth ≥ 24, `--timeline
     fcpxml|none`, `--fps`, FCPXML lanes in the user's device order.
@@ -23,26 +24,21 @@ this file when it is out of date.
 - **Desktop app**: decided, not built. Python + PySide6, analysis in a child process
   (`chronon … --json`). The packaging spike on `spike/packaging` passed on all three platforms
   (PyInstaller, bundled ffmpeg, headless self test in `.github/workflows/app.yml`). It still uses
-  its own worker; switch it to `chronon … --json` when the app starts.
+  its own worker; switch it to `chronon … --json` (contract v2) when the app starts.
 - **Design**: finished. Boards in `docs/design/ui/png/{dark,light}`, spec in `docs/design/ui/README.md`
   (read its "Corrections to the boards" section: the timeline row is a format choice, multitrack
   devices are disabled targets in the move / merge dialogs, parallel-track output names).
   Decisions with reasons: `docs/design/gaps.md` ("Decided 2026-10-07").
 
 ## Next steps (in order)
-1. **Notes and errors as codes** (gaps.md 1.3). Rows carry English sentences in `notes`; the UI
-   is German. Structured notes (`{"code": "measured_via", "file": …}`), translated by the app;
-   the terminal builds its English text from the same codes. Same for user-fixable errors
-   (unreadable file, output folder holds originals, not enough space). This touches the
-   `--json` contract: bump `v`.
-2. **Listening and waveforms** (gaps.md 1.6): `audio.excerpt(path, start_s, seconds, rate)` with
+1. **Listening and waveforms** (gaps.md 1.6): `audio.excerpt(path, start_s, seconds, rate)` with
    a fast seek; reference time → file time per row (joined clips, devices); min/max overview of
    a whole track, cached on disk (cache folder from settings).
-3. **Smaller** (gaps.md 1.7): MP4 `tmcd` timecode into `audio.probe` (only `fcpxml.py` parses it
+2. **Smaller** (gaps.md 1.7): MP4 `tmcd` timecode into `audio.probe` (only `fcpxml.py` parses it
    now) for the start column; a log file per run for "Protokoll öffnen".
-4. **Build the app** from `spike/packaging` (rebase onto `main`), screen by screen following the
+3. **Build the app** from `spike/packaging` (rebase onto `main`), screen by screen following the
    boards: Dateien → Geräte & Referenz → Sync → Ergebnis → Hören → Export, plus settings.
-5. Later, only with a reason: progress has one 6–7 s gap while the first video decodes in the
+4. Later, only with a reason: progress has one 6–7 s gap while the first video decodes in the
    background; issues #5, #7, #8, #11, #15.
 
 ## How the user works
