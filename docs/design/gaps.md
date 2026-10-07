@@ -48,7 +48,7 @@ events today have `step` = `analysing` and a free-text `what`. Needed:
   the detected value in the analysis (1.1), so the dropdown can say "aus den Videos erkannt".
 - **Audio format:** see the open question in 2.
 
-### 1.6 Listening and waveforms
+### 1.6 Listening and waveforms (done: `chronon.listen`, `chronon overview`)
 - `audio.excerpt(path, start_s, seconds, rate)`: a few seconds from any position, with a fast
   seek (excerpt reads for PCM, `ffmpeg -ss` for everything else). Step 2 audition and step 5.
 - Reference time to file time for a row, including joined clips and devices. This belongs in the

@@ -23,7 +23,7 @@ The core is Python (numpy, scipy, libsoxr, libsndfile, ffmpeg) and stays the onl
 Why PySide6:
 - One process, one language, one bundle per platform; the GUI imports `chronon` directly.
 - Qt is mature on all three platforms, including Linux.
-- Listening reuses the excerpt `Source`s of `audio.py` and plays them with QtMultimedia — no
+- Listening uses `chronon.listen` (excerpts, below) and plays them with QtMultimedia — no
   audio over a protocol.
 - Drag & drop yields real file paths (a browser never does).
 - LGPL, fits any open-source license. A timeline view later fits `QGraphicsView`.
@@ -160,8 +160,26 @@ notes of older reports into `{"code": "text", "text": …}`.
 - [x] `--json` mode for `analyze`, `sync`, `correct` (contract above) and a versioned report schema
 - [x] Windows in CI; path robustness (drive letters, long paths, Unicode normalisation, case-
       insensitive file systems), including the originals check (compare real paths / same file)
-- [ ] Small API for listening: a mono/stereo excerpt of a file at reference time *t*, using
-      the measured alignment
+- [x] Small API for listening (`chronon.listen`, below)
+
+## Listening and waveforms (`chronon.listen`)
+The GUI imports these directly (no child process; an excerpt takes well under a second):
+- `audio.excerpt(path, start_s, seconds, rate)`: mono float32, zeros outside the recording,
+  always `round(seconds * rate)` samples. PCM seeks to the sample; video and compressed audio
+  are decoded by ffmpeg from the nearest point before (`-ss` before `-i`).
+- `listen.Timeline(analysis)`: reference time ↔ file time for every file, reference tracks
+  included. `at(ref_t, device)` = the files (clips, parallel tracks) playing at `ref_t`;
+  `span(path)`, `file_time(path, ref_t)`, `suggest(path)` = a start worth listening at (the
+  middle window the measurement agreed on); `pair(path, ref_t)` = reference track left, file
+  right. Timeline time = `ref_t - Timeline.zero`. The file plays at its own rate: a 60 ppm
+  clock runs 0.6 ms ahead after 10 s of listening, inaudible.
+- Overviews: `listen.overview(path, cache_dir)` = min/max peaks, 100 pairs a second over all
+  channels, int8, kept in `cache_dir` (keyed by real path, size, modification time);
+  `listen.reduce(peaks, width)` squeezes them into a widget's columns. A 4 h desk track is a
+  2.9 MB file. Computing one reads the whole file (a video takes long), so the app runs
+  `chronon overview --json FILE... --cache DIR` in a child process: `progress` (step
+  `overview`), then `result` with `files` = `file`, `overview` (the cache file, a `.npy`),
+  `peaks_per_s`, `peaks`.
 
 ## First step: packaging spike
 A minimal PySide6 window — drop files, run `analyze` in a child process, progress bar, result

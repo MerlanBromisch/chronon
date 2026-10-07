@@ -22,6 +22,7 @@ from chronon import messages
 
 RESAMPLE_QUALITY = "HQ"
 EXCERPT_PAD_S = 0.05  # extra audio read on both sides of an excerpt for the resampler
+SEEK_MARGIN_S = 2.0  # ffmpeg excerpts: decoded from this long before the start
 
 
 class AudioError(messages.UserError, RuntimeError):
@@ -180,6 +181,82 @@ def load(path: Path | str, rate: int) -> np.ndarray:
             f"cannot decode {path}: {err}", "unreadable_file", file=str(path), detail=err
         )
     return np.frombuffer(result.stdout, dtype="<f4").copy()
+
+
+def excerpt(path: Path | str, start_s: float, seconds: float, rate: int) -> np.ndarray:
+    """``seconds`` of ``path`` from file time ``start_s`` on, mono float32 at ``rate`` Hz,
+    zeros before and after the recording; always ``round(seconds * rate)`` samples.
+
+    Fast anywhere in a long file: PCM files (and whatever else libsndfile reads) seek to the
+    sample, everything else is decoded by ffmpeg from shortly before ``start_s``."""
+    n = round(seconds * rate)
+    try:
+        f = sf.SoundFile(str(path))
+    except (RuntimeError, sf.LibsndfileError):
+        return _excerpt_ffmpeg(path, start_s, seconds, rate, n)
+    with f:
+        native = f.samplerate
+        pad = int(EXCERPT_PAD_S * native) if native != rate else 0
+        first = round(start_s * native) - pad
+        count = round(seconds * native) + 2 * pad
+        data = np.zeros(count, dtype=np.float32)
+        a, b = max(first, 0), min(first + count, f.frames)
+        if b > a:
+            f.seek(a)
+            block = f.read(b - a, dtype="float32", always_2d=True)
+            data[a - first : a - first + len(block)] = block.mean(axis=1)
+    if native != rate:
+        data = soxr.resample(data, native, rate, quality=RESAMPLE_QUALITY)
+    return _fit(data[round(pad * rate / native) :], n)
+
+
+def _excerpt_ffmpeg(path: Path | str, start_s: float, seconds: float, rate: int, n: int):
+    lead = round(max(-start_s, 0.0) * rate)  # silence before the recording starts
+    take = seconds - lead / rate
+    if take <= 0:
+        return np.zeros(n, dtype=np.float32)
+    # Seek coarsely before the excerpt (fast), then cut it exactly from the decoded audio.
+    # Seeking straight to the start lands up to ~1100 samples off on AAC in newer ffmpeg
+    # (the encoder delay is lost), and so does any seek near the file's start.
+    start = max(start_s, 0.0)
+    seek = start - SEEK_MARGIN_S if start >= 2 * SEEK_MARGIN_S else 0.0
+    cmd = [
+        _tool("ffmpeg"),
+        "-nostdin",
+        "-v",
+        "error",
+        *(["-ss", f"{seek:.6f}"] if seek else []),
+        "-i",
+        str(path),
+        "-ss",
+        f"{start - seek:.6f}",
+        "-t",
+        f"{take:.6f}",
+        "-map",
+        "0:a:0",
+        "-ac",
+        "1",
+        "-ar",
+        str(rate),
+        "-f",
+        "f32le",
+        "-",
+    ]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        err = result.stderr.decode(errors="replace").strip()
+        raise AudioError(
+            f"cannot decode {path}: {err}", "unreadable_file", file=str(path), detail=err
+        )
+    data = np.frombuffer(result.stdout, dtype="<f4")
+    return _fit(np.concatenate([np.zeros(lead, dtype=np.float32), data]), n)
+
+
+def _fit(x: np.ndarray, n: int) -> np.ndarray:
+    """``x`` cut or padded with zeros to ``n`` samples."""
+    out = np.zeros(n, dtype=np.float32)
+    out[: min(n, len(x))] = x[:n]
+    return out
 
 
 def resample(x: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
