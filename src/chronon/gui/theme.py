@@ -198,6 +198,15 @@ QDialog {{ background: {t["panel"]}; }}
 #placeholder {{ color: {t["text2"]}; }}
 #rule {{ background: {t["divider"]}; }}
 #percent {{ font-size: 22px; }}
+#choicecard {{ background: {t["panel"]}; border: 1px solid {
+        t["card_border"]
+    }; border-radius: 4px; }}
+#choicecard[selected="true"] {{ border: 1px solid {t["accent"]}; }}
+#warnhint {{ font-size: 12px; color: {t["amber"]}; }}
+#pathfield {{ font-family: "{mono}"; font-size: 12px; }}
+QLineEdit, QComboBox {{ min-height: 30px; padding: 0 10px; border: 1px solid {t["button_border"]};
+    border-radius: 4px; background: {t["input"]}; }}
+QComboBox {{ min-width: 110px; }}
 #monobold {{ font-family: "{mono}"; font-size: 12px; font-weight: 600; }}
 #monotitle {{ font-family: "{mono}"; font-size: 17px; font-weight: 600; }}
 #bigclock {{ font-family: "{mono}"; font-size: 20px; padding: 0 14px; }}

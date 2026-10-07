@@ -65,6 +65,12 @@ class Project:
         """Whether step 3's result still belongs to the devices of step 2."""
         return self.result is not None and self.synced == self.layout_json
 
+    def reset(self) -> None:
+        """A new project: everything but the session folder goes."""
+        fresh = Project()
+        for name in ("entries", "layout", "suggested_tracks", "synced", "analysis_path", "result"):
+            setattr(self, name, getattr(fresh, name))
+
     def folder(self) -> Path:
         if self.work_dir is None:
             from chronon.gui import settings
