@@ -583,8 +583,12 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
     by_source = {seg.source: o for o in outputs for seg in o.segments} | {
         o.source: o for o in outputs
     }
-    # parallel tracks share one correction: check the track it was measured through
-    todo = [o for o in outputs if not o.is_reference and (not o.via or o.via == o.source)]
+    # parallel tracks share one correction: check the track it was measured through. A file
+    # without a reliable match is not checked: the check only searches near where the file
+    # was put, so it would confirm any placement (verified stays None)
+    todo = [
+        o for o in outputs if not o.is_reference and o.reliable and (not o.via or o.via == o.source)
+    ]
     for k, out in enumerate(todo):
         report("verifying", k, len(todo))
         ref = by_source[out.reference]

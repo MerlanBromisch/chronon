@@ -166,3 +166,24 @@ def test_overview_cli_json(tmp_path, capsys):
     (row,) = events[-1]["files"]
     assert row["file"] == str(rec) and row["peaks"] == 40 * listen.PEAKS_PER_S
     assert np.load(row["overview"]).shape == (row["peaks"], 2)
+
+
+def test_without_a_reliable_match_listen_where_both_play(tmp_path):
+    scenario = Scenario(
+        signal="speech",
+        extra_signals=("speech",),
+        seed=5,
+        devices=(
+            Device("rec", (Clip(0.0, 120.0),), pickup=((0.0, 0.0), (-200.0, 0.0))),
+            Device("other", (Clip(20.0, 60.0),), pickup=((-200.0, 0.0), (0.0, 0.0))),
+        ),
+    )
+    synth.write(scenario, tmp_path)
+    # a file that matches nothing is no error: it gets a row without a reliable match
+    measured = analysis.measure([tmp_path / "rec_01.wav"], [tmp_path / "other_01.wav"])
+    assert not measured.results[0].alignment.reliable
+    t = listen.Timeline(measured)
+    other = tmp_path / "other_01.wav"
+    start, end = t.span(other)
+    lo, hi = max(start, 0.0), min(end, 120.0)
+    assert t.suggest(other, 2.0) == pytest.approx((lo + hi) / 2 - 1.0)

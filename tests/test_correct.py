@@ -209,3 +209,20 @@ def test_timeline_none_and_frame_rate(tmp_path, capsys):
     assert 'frameDuration="1001/30000s"' in (synced / "sync.fcpxml").read_text(encoding="utf-8")
     with pytest.raises(SystemExit):
         main(["sync", "--fps", "fast", str(rec), str(cam), "-o", str(synced)])
+
+
+def test_a_file_without_a_reliable_match_is_exported_but_not_verified(tmp_path):
+    scenario = Scenario(
+        signal="speech",
+        extra_signals=("speech",),
+        seed=5,
+        devices=(
+            Device("rec", (Clip(0.0, 60.0),), pickup=((0.0, 0.0), (-200.0, 0.0))),
+            Device("other", (Clip(10.0, 30.0),), pickup=((-200.0, 0.0), (0.0, 0.0))),
+        ),
+    )
+    synth.write(scenario, tmp_path / "media")
+    rec, other = tmp_path / "media" / "rec_01.wav", tmp_path / "media" / "other_01.wav"
+    _, out = correct.run([rec], [other], tmp_path / "out")
+    assert not out.reliable and out.verified is None  # a check would only confirm itself
+    assert {"code": "no_reliable_match"} in out.notes

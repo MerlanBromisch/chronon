@@ -470,6 +470,7 @@ class ExportPage(QWidget):
                 name = Path(r["path"]).name
                 state = r.get("verified")
                 tag = (badge("ref", "Referenz") if r.get("is_reference")
+                       else badge("unsure") if not r.get("reliable", True)
                        else badge("ok", "geprüft") if state
                        else badge("bad", "Prüfung fehlgeschlagen") if state is False
                        else badge("unsure", "nicht geprüft"))  # fmt: skip
