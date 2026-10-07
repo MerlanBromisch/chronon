@@ -1,57 +1,100 @@
-"""Start the window; ``--selftest FOLDER`` checks a (frozen) build without a screen."""
+"""Start the window; ``--selftest FOLDER`` runs the whole app without a screen."""
 
 from __future__ import annotations
 
 import json
 import sys
+import tempfile
+import time
+from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QEventLoop
 from PySide6.QtWidgets import QApplication
 
-from chronon.gui.jobs import Job
 from chronon.gui.window import Window
 
-SELFTEST_TIMEOUT_MS = 300_000
+STEP_TIMEOUT_S = 300.0
+
+
+class SelftestError(RuntimeError):
+    pass
+
+
+def walk(win: Window, folder: str | Path, out: Path, timeout: float = STEP_TIMEOUT_S) -> dict:
+    """Drive every step as a user would: read ``folder``, take the suggested devices and
+    reference, sync, look at the result, listen, export corrected audio to ``out``.
+    Returns what each step showed; raises SelftestError when a step fails."""
+    app = QApplication.instance()
+
+    def wait(condition, what: str) -> None:
+        end = time.monotonic() + timeout
+        while not condition():
+            if time.monotonic() > end:
+                raise SelftestError(f"timed out: {what}")
+            app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
+
+    seen: dict = {}
+    win.files.add([folder])
+    wait(lambda: not win.files.reading, "reading the files")
+    entries = win.project.entries
+    seen["files"] = len(entries)
+    unreadable = [e.path.name for e in entries if e.info is None]
+    if unreadable or len(entries) < 2:
+        raise SelftestError(f"files: {len(entries)}, unreadable: {unreadable}")
+
+    win.go_on()
+    wait(lambda: not win.devices.detecting, "detecting devices")
+    layout = win.project.layout
+    if layout is None or not win.devices.ready:
+        raise SelftestError(f"devices: {win.devices.error or 'no layout'}")
+    seen["devices"] = [d.name for d in layout.devices]
+
+    win.go_on()  # Sync starten
+    wait(lambda: win.sync.state != "running", "sync")
+    if win.sync.state != "done":
+        raise SelftestError(f"sync: {win.sync.state} {getattr(win.sync, 'error', '')}")
+    rows = win.project.result["files"]
+    seen["unreliable"] = [Path(r["file"]).name for r in rows if not r["reliable"]]
+    wait(lambda: win.step == 3, "the result page")
+
+    win.go_on()  # Hören
+    if win.listen.current is None or not len(win.listen.ref_wave.peaks):
+        raise SelftestError("listen: no file or no waveform")
+    seen["listen"] = win.listen.name.text()
+
+    win.go_on()  # Export
+    win.export.correct_choice.radio.setChecked(True)
+    win.export.folder.setText(str(out))
+    win.go_on()  # Exportieren
+    wait(lambda: win.export.state != "running", "export")
+    if win.export.state != "done":
+        raise SelftestError(f"export: {win.export.state} {win.export.error}")
+    outcome = win.export.outcome["files"]
+    seen["exported"] = sorted(Path(r["path"]).name for r in outcome)
+    seen["failed"] = [Path(r["path"]).name for r in outcome if r.get("verified") is False]
+    return seen
 
 
 def selftest(folder: str) -> int:
-    """Read every file of ``folder`` in the window, then analyse them in a worker (first file
-    as reference); exit 0 when all were readable and every result is reliable."""
+    """For CI and a frozen build: the whole flow on ``folder``; exit 0 when every file was
+    readable, reliable and its corrected output passed the check."""
     app = QApplication.instance() or QApplication(sys.argv)
     win = Window(appearance="light")
-    outcome = {"code": 1}
-    jobs: list[Job] = []
-
-    def analyse() -> None:
-        if jobs or win.files.reading or not win.project.entries:
-            return
-        entries = win.project.entries
-        unreadable = [str(e.path) for e in entries if e.info is None]
-        if unreadable or len(entries) < 2:
-            print(json.dumps({"unreadable": unreadable, "files": len(entries)}))
-            app.quit()
-            return
-        job = Job(["analyze", *(str(e.path) for e in entries)], parent=win)
-        jobs.append(job)
-        job.result.connect(done)
-        job.failed.connect(lambda e: (print(json.dumps(e)), app.quit()))
-        job.start()
-
-    def done(result: dict) -> None:
-        rows = result["files"]
-        bad = [r["file"] for r in rows if not r["reliable"]]
-        print(json.dumps({"files": len(rows) + 1, "unreliable": bad}))
-        outcome["code"] = 0 if not bad else 1
-        app.quit()
-
-    win.files.changed.connect(lambda: QTimer.singleShot(0, analyse))
-    win.files.add([folder])
-    QTimer.singleShot(SELFTEST_TIMEOUT_MS, app.quit)
-    app.exec()
-    for job in jobs:
-        job.wait()
-    print("selftest", "ok" if outcome["code"] == 0 else "FAILED")
-    return outcome["code"]
+    win.show()
+    with tempfile.TemporaryDirectory(prefix="chronon-selftest-") as tmp:
+        try:
+            seen = walk(win, folder, Path(tmp) / "export")
+        except SelftestError as e:
+            print(json.dumps({"error": str(e)}))
+            seen = None
+        finally:
+            win.close()
+    ok = bool(seen) and not seen["unreliable"] and not seen["failed"]
+    if seen:
+        print(json.dumps(seen))
+    print("selftest", "ok" if ok else "FAILED")
+    app.processEvents()
+    return 0 if ok else 1
 
 
 def run(argv: list[str]) -> int:

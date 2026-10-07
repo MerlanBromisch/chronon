@@ -21,6 +21,7 @@ from chronon.gui.audition import Overviews, Player
 from chronon.gui.devices_page import DevicesPage
 from chronon.gui.export_page import ExportPage
 from chronon.gui.files_page import FilesPage
+from chronon.gui.jobs import Job
 from chronon.gui.listen_page import ListenPage
 from chronon.gui.project import Project
 from chronon.gui.result_page import ResultPage
@@ -170,6 +171,9 @@ class Window(QMainWindow):
         self.player.stop()
         self.overviews.stop()
         self.files.cancel()
+        for job in self.findChildren(Job):  # sync / export, maybe still finishing
+            job.cancel()
+            job.wait(5000)
 
     def set_appearance(self, appearance: str) -> None:
         """Change the theme live: every widget holds this one token dict."""

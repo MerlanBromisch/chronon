@@ -28,20 +28,19 @@ this file when it is out of date.
     fcpxml|none`, `--fps`, FCPXML lanes in the user's device order.
 - **CI** runs the full suite on Ubuntu, macOS and Windows (LGPL ffmpeg on Windows: no libx264,
   test videos use `mpeg4`). Windows has already caught two path bugs; expect more.
-- **Desktop app** (`src/chronon/gui/`, see `docs/app.md` "The app in the repo"): window, theme,
-  jobs (`chronon … --json` in a child process), step 1 "Dateien" and step 2 "Geräte & Referenz"
-  without its audition are built; steps 3–6 and settings are placeholders. Packaging from the spike (PyInstaller, bundled ffmpeg, headless
-  self test in `.github/workflows/app.yml`, runs on pull requests touching the app).
+- **Desktop app** (`src/chronon/gui/`, see `docs/app.md` "The app in the repo"): all six steps
+  and the settings are built, following the boards and their corrections. `app.walk()` drives the
+  whole flow; the app build runs it as a self test on all three platforms.
 - **Design**: finished. Boards in `docs/design/ui/png/{dark,light}`, spec in `docs/design/ui/README.md`
   (read its "Corrections to the boards" section: the timeline row is a format choice, multitrack
   devices are disabled targets in the move / merge dialogs, parallel-track output names).
   Decisions with reasons: `docs/design/gaps.md` ("Decided 2026-10-07").
 
 ## Next steps (in order)
-1. **Build the app**, screen by screen following the boards, one PR each: the audition of step 2
-   (`listen.overview` in a job, `audio.excerpt` played with QtMultimedia) → Sync (`analyze
-   --devices --save`, the plan / task progress) → Ergebnis → Hören → Export, plus settings.
-2. Later, only with a reason: issues #5, #7, #8, #11, #15.
+1. **The user tests the app** on real material (the musical, the interview) and reports what is
+   wrong or awkward; fix that first. Playback could not be heard in the cloud (no audio device).
+2. Later, only with a reason: a project file to reopen a session; bundle IBM Plex; issues #5,
+   #7 (Premiere), #8 (Resolve), #11, #15.
 
 ## How the user works
 - Replies in German; code, comments, docs in English. Short answers, a recommendation rather

@@ -24,6 +24,19 @@ Ideas for later: sub-sample phase alignment of mics, clap/slate detection, devic
 
 See [ROADMAP.md](ROADMAP.md).
 
+## Desktop app
+
+```sh
+uv sync --extra gui
+uv run chronon-app
+```
+
+Six steps: drop the files, check devices and reference, sync, read the result, listen, export
+(a Final Cut Pro / Logic timeline of the originals, or drift-corrected audio). Builds for macOS,
+Windows and Linux come from the "App build" workflow (download them under its run's artifacts).
+They are not signed: on macOS open the app with right-click → Open the first time, on Windows
+choose "More info → Run anyway".
+
 ## Development
 
 Requires Python ≥ 3.11, [uv](https://docs.astral.sh/uv/) and ffmpeg (`brew install ffmpeg`).
