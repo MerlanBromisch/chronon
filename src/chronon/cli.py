@@ -11,7 +11,7 @@ import traceback
 from collections.abc import Sequence
 from pathlib import Path
 
-from chronon import __version__, align, audio, correct, synth
+from chronon import __version__, align, analysis, audio, correct, fcpxml, synth
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -30,12 +30,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     p = commands.add_parser("analyze", help="measure offset and drift of files against a reference")
     _ref_args(p, export=False)
     p.add_argument("files", nargs="+", help="recordings to align to the reference")
+    p.add_argument(
+        "--save",
+        metavar="FILE",
+        help="keep the analysis in FILE for 'sync' / 'correct --analysis' (no second analysis)",
+    )
 
     p = commands.add_parser(
         "sync", help="write a Final Cut Pro timeline (FCPXML) of the original files"
     )
     _ref_args(p)
-    p.add_argument("files", nargs="+", help="recordings to place")
+    p.add_argument("files", nargs="*", help="recordings to place (or --analysis)")
     p.add_argument("-o", "--out", required=True, help="output folder for the .fcpxml")
     p.add_argument("--name", help="project name (default: the output folder's name)")
 
@@ -43,7 +48,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "correct", help="write drift- and rate-corrected audio on one timeline, then verify it"
     )
     _ref_args(p)
-    p.add_argument("files", nargs="+", help="recordings to correct")
+    p.add_argument("files", nargs="*", help="recordings to correct (or --analysis)")
     p.add_argument(
         "-o", "--out", required=True, help="output folder (must not be a folder holding any input)"
     )
@@ -61,6 +66,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="auto = WAV, or CAF for files over 2 GiB",
     )
     p.add_argument("--overwrite", action="store_true", help="replace existing output files")
+    p.add_argument(
+        "--no-timeline",
+        dest="timeline",
+        action="store_false",
+        help="write only the corrected audio, no .fcpxml",
+    )
     p.add_argument("--name", help="project name (default: the output folder's name)")
     p.add_argument(
         "--join",
@@ -135,6 +146,17 @@ def _ref_args(p: argparse.ArgumentParser, export: bool = True) -> None:
     )
     if export:
         p.add_argument(
+            "--fps",
+            type=fcpxml.frame_rate,
+            metavar="RATE",
+            help="timeline frame rate, e.g. 25, 29.97, 23.976 (default: the videos', else 25)",
+        )
+        p.add_argument(
+            "--analysis",
+            metavar="FILE",
+            help="use an analysis saved by 'analyze --save' instead of analysing the files again",
+        )
+        p.add_argument(
             "--all-refs",
             action="store_true",
             help="export every reference track, not only those a file matched best",
@@ -142,6 +164,10 @@ def _ref_args(p: argparse.ArgumentParser, export: bool = True) -> None:
 
 
 def _refs_and_files(args: argparse.Namespace) -> tuple[list[str], list[str]]:
+    if getattr(args, "analysis", None):
+        if args.files or args.ref:
+            raise ValueError("give either files or --analysis, not both")
+        return [], []
     refs, files = (args.ref, args.files) if args.ref else (args.files[:1], args.files[1:])
     if not files:
         raise ValueError("give a reference and at least one more file")
@@ -167,13 +193,23 @@ def _synth(args: argparse.Namespace) -> int:
 def _analyze(args: argparse.Namespace, out: _JsonOut | None) -> int:
     refs, files = _refs_and_files(args)
     progress = _Progress(["analysing"], out)
-    results = align.align_files(refs, files, progress=progress, separate=args.separate)
+    measured = analysis.measure(refs, files, progress, args.separate)
+    results = measured.results
     progress.finish()
+    saved = measured.save(args.save) if args.save else None
     if out is not None:
         rows = [
-            _analysis_row(path, r, len(refs) > 1) for path, r in zip(files, results, strict=True)
+            _analysis_row(path, r, len(refs) > 1) | {"placement": p}
+            for path, r, p in zip(files, results, measured.placements, strict=True)
         ]
-        out.emit("result", command="analyze", refs=[str(r) for r in refs], files=rows)
+        out.emit(
+            "result",
+            command="analyze",
+            refs=[str(r) for r in refs],
+            analysis=None if saved is None else str(saved),
+            frame_rate=str(measured.frame_rate),
+            files=rows,
+        )
         return 0
     print(f"reference: {', '.join(Path(r).name for r in refs)}")
     print(
@@ -188,6 +224,8 @@ def _analyze(args: argparse.Namespace, out: _JsonOut | None) -> int:
             f"{a.confidence:>10.2f}  {a.windows_used:>4}/{a.windows_total:<4} "
             + ", ".join(([] if r.is_reference else _notes(a, via)) + correct.result_notes(r))
         )
+    if saved is not None:
+        print(f"analysis: {saved}")
     return 0
 
 
@@ -214,6 +252,10 @@ def _analysis_row(path: str, r: align.FileResult, several_refs: bool) -> dict:
     }
 
 
+def _saved(args: argparse.Namespace) -> analysis.Analysis | None:
+    return analysis.Analysis.load(args.analysis) if args.analysis else None
+
+
 def _str(path: Path | None) -> str | None:
     return None if path is None else str(path)
 
@@ -238,6 +280,9 @@ def _correct(args: argparse.Namespace, out: _JsonOut | None) -> int:
         name=args.name,
         separate=args.separate,
         join=args.join,
+        measured=_saved(args),
+        timeline=args.timeline,
+        frame=args.fps,
     )
     progress.finish()
     failed = [o for o in outputs if o.verified is False]
@@ -246,7 +291,7 @@ def _correct(args: argparse.Namespace, out: _JsonOut | None) -> int:
             "result",
             command="correct",
             report=str(Path(args.out) / "chronon-report.json"),
-            timeline=str(_timeline_path(args)),
+            timeline=str(_timeline_path(args)) if args.timeline else None,
             failed=len(failed),
             files=correct.report_rows(outputs),
         )
@@ -263,7 +308,15 @@ def _sync(args: argparse.Namespace, out: _JsonOut | None) -> int:
     refs, files = _refs_and_files(args)
     progress = _Progress(["analysing"], out)
     result = correct.sync(
-        refs, files, args.out, progress, args.all_refs, args.name, separate=args.separate
+        refs,
+        files,
+        args.out,
+        progress,
+        args.all_refs,
+        args.name,
+        separate=args.separate,
+        measured=_saved(args),
+        frame=args.fps,
     )
     progress.finish()
     if out is not None:

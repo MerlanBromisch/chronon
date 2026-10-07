@@ -25,13 +25,14 @@ import unicodedata
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 import soxr
 
-from chronon import __version__, align, audio, fcpxml
+from chronon import __version__, align, analysis, audio, fcpxml
 
 WAV_MAX_BYTES = 2**32 - 2**20  # RIFF sizes are 32-bit; leave room for the header and chunks
 CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fail at 2 GiB
@@ -49,6 +50,8 @@ BLOCK_FRAMES = 1 << 16
 # BWF time stamps count from 01:00:00:00, where a Logic project starts by default: timeline
 # zero lands on the project start ("move region to recorded position")
 BWF_ORIGIN_S = 3600.0
+SUFFIX = "_korrigiert"  # corrected outputs: <device or file>_korrigiert.<ext>
+MIN_BITS = 24  # resampled audio is not requantised to 16 bit (no dither needed)
 BWF_FORMATS = ("wav",)
 WRITE_THREADS = min(4, os.cpu_count() or 1)
 
@@ -116,28 +119,18 @@ class CorrectError(ValueError):
 Entry = tuple[Path, align.FileResult]
 
 
-def analyse(
-    refs: Sequence[Path],
-    files: Sequence[Path],
-    all_refs: bool = False,
-    progress: Progress | None = None,
-    separate: bool = False,
-) -> list[Entry]:
-    """Align the files; return entries for the reference tracks to export and the files.
-
-    Of several reference tracks only those some file matched best are exported (plus the
-    first), unless ``all_refs``; all of them are still used to find the best match."""
-    report = progress or (lambda what, done, total: None)
-    results = align.align_files(refs, files, progress=report, separate=separate)
-    used = {Path(refs[0])} | {r.reference for r in results}
-    identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
-    entries: list[Entry] = [
-        (Path(r), align.FileResult(Path(r), identity, "reference", is_reference=True))
-        for r in refs
-        if (all_refs or Path(r) in used) and Path(r) not in {Path(f) for f in files}
-    ]
-    entries += [(Path(f), r) for f, r in zip(files, results, strict=True)]
-    return entries
+def _measured(
+    refs: Sequence[Path | str],
+    files: Sequence[Path | str],
+    done: analysis.Analysis | None,
+    progress: Progress | None,
+    separate: bool,
+) -> analysis.Analysis:
+    """The given analysis (its files unchanged since), or a new one."""
+    if done is None:
+        return analysis.measure(refs, files, progress, separate)
+    done.check_sources()
+    return done
 
 
 def run(
@@ -153,13 +146,19 @@ def run(
     name: str | None = None,
     separate: bool = False,
     join: bool = False,
+    measured: analysis.Analysis | None = None,
+    timeline: bool = True,
+    frame: Fraction | None = None,
 ) -> list[Output]:
-    """Analyse, write, verify, write the timeline. Returns one Output per exported file
-    (per device for joined clips)."""
+    """Analyse (unless ``measured`` is a saved analysis), write, verify, write the timeline
+    (unless not ``timeline``; ``frame`` = its frame duration, default from its videos).
+    Returns one Output per exported file (per device for joined clips)."""
+    if measured is not None:
+        refs, files = measured.refs, measured.files
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
     _check_outdir(outdir, refs + files)
     report = progress or (lambda what, done, total: None)
-    entries = analyse(refs, files, all_refs, report, separate)
+    entries = _measured(refs, files, measured, report, separate).entries(all_refs)
     outputs = plan(entries, outdir, rate, pad, fmt, overwrite, join)
     _check_space(outdir, outputs)
 
@@ -167,7 +166,7 @@ def run(
     write_all(outputs, report)
 
     verify(outputs, report)
-    placed = _write_timeline(_corrected_items(outputs), outdir, name)
+    placed = _write_timeline(_corrected_items(outputs), outdir, name, frame) if timeline else []
     for p in placed:
         if p.media.has_video:
             out = next(o for o in outputs if str(p.item.path) in {g.source for g in o.segments})
@@ -201,18 +200,23 @@ def sync(
     all_refs: bool = False,
     name: str | None = None,
     separate: bool = False,
+    measured: analysis.Analysis | None = None,
+    frame: Fraction | None = None,
 ) -> list[Placement]:
-    """Analyse and write a timeline of the original files (nothing corrected)."""
+    """Analyse (unless ``measured`` is a saved analysis) and write a timeline of the
+    original files (nothing corrected)."""
+    if measured is not None:
+        refs, files = measured.refs, measured.files
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
     _check_outdir(outdir, refs + files)
-    entries = analyse(refs, files, all_refs, progress, separate)
+    entries = _measured(refs, files, measured, progress, separate).entries(all_refs)
     zero = min(0.0, *(r.alignment.offset_s for _, r in entries))
     items = [
         fcpxml.Item(f, r.alignment.offset_s - zero, r.alignment.drift_ppm, group=r.device)
         for f, r in entries
     ]
     outdir.mkdir(parents=True, exist_ok=True)
-    placed = _write_timeline(items, outdir, name)
+    placed = _write_timeline(items, outdir, name, frame)
     result = [
         Placement(
             str(f),
@@ -299,9 +303,11 @@ def _corrected_items(outputs: Sequence[Output]) -> list[fcpxml.Item]:
     return items
 
 
-def _write_timeline(items: list[fcpxml.Item], outdir: Path, name: str | None):
+def _write_timeline(
+    items: list[fcpxml.Item], outdir: Path, name: str | None, frame: Fraction | None = None
+):
     name = name or outdir.name
-    return fcpxml.write(items, outdir / f"{name}.fcpxml", name)
+    return fcpxml.write(items, outdir / f"{name}.fcpxml", name, frame)
 
 
 def result_notes(r: align.FileResult) -> list[str]:
@@ -404,7 +410,7 @@ def _plan_output(
         in_rate=info.sample_rate,
         out_rate=rate,
         channels=info.channels,
-        bits=info.bits,
+        bits=max(info.bits, MIN_BITS),
         padded=pad,
         pad_frames=pad_frames,
         frames=max(seg.start_frame + seg.out_frames for seg in segments),
@@ -440,7 +446,7 @@ def _plan_output(
         out.notes.append("NO RELIABLE MATCH: position and drift may be wrong")
     if out.has_video:
         out.notes.append("audio of a video file; the video itself is not changed")
-    path = outdir / f"{name}.{out.format}"
+    path = outdir / f"{name}{SUFFIX}.{out.format}"
     if path.exists() and not overwrite:
         raise CorrectError(f"{path} exists (use --overwrite)")
     out.path = str(path)

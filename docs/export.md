@@ -27,7 +27,10 @@ output folder.
   time stamp (Logic: move region to recorded position — to verify) and in the timeline file.
 - **Timeline zero = the earliest start of any file.** Nothing is cut off; the reference is
   padded too when something started before it.
-- Bit depth and channel layout as in the source; target rate is a setting (default 48 kHz).
+- Channel layout as in the source; bit depth as in the source but at least 24 bit (16-bit camera
+  audio is not requantised to 16 bit after resampling, so no dither is needed; peaks the
+  resampling pushes above 0 dBFS are clipped). Target rate is a setting (default 48 kHz).
+- Corrected files are named `<device or file>_korrigiert.<wav|caf>`.
 - The reference is also written, so every output file shares the same zero.
 - **One output file per clip** by default. With `--join` the clips of a device become one file,
   gaps filled with silence; each clip keeps its own drift correction. Parallel tracks are not

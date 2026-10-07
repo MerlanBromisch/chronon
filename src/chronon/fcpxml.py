@@ -82,26 +82,26 @@ class Placed:
     error_ms: float = 0.0  # worst remaining misplacement over the clip
 
 
-def write(items: list[Item], path: Path | str, name: str) -> list[Placed]:
-    """Write the timeline; return the placements (for reporting)."""
-    placed = place(items)
-    Path(path).write_text(render(placed, name), encoding="utf-8")
+def write(
+    items: list[Item], path: Path | str, name: str, frame: Fraction | None = None
+) -> list[Placed]:
+    """Write the timeline; return the placements (for reporting). ``frame`` is the
+    timeline's frame duration (default: its first video's, else 1/25 s)."""
+    placed = place(items, frame)
+    Path(path).write_text(render(placed, name, frame), encoding="utf-8")
     return placed
 
 
-def place(items: list[Item]) -> list[Placed]:
+def place(items: list[Item], frame: Fraction | None = None) -> list[Placed]:
     medias = [probe(i.path) for i in items]
-    frames = [m.frame for m in medias if m.has_video and m.frame]
-    frame = frames[0] if frames else DEFAULT_FRAME
+    frame = frame or timeline_frame(medias)
     placed = [_place(i, m, frame) for i, m in zip(items, medias, strict=True)]
     _assign_lanes(placed)
     return placed
 
 
-def render(placed: list[Placed], name: str) -> str:
-    frame = next(
-        (p.media.frame for p in placed if p.media.has_video and p.media.frame), DEFAULT_FRAME
-    )
+def render(placed: list[Placed], name: str, frame: Fraction | None = None) -> str:
+    frame = frame or timeline_frame([p.media for p in placed])
     formats: dict[tuple, str] = {}
     res, clips = [], []
 
@@ -194,6 +194,23 @@ def render(placed: list[Placed], name: str) -> str:
 
 
 # --- placement -------------------------------------------------------------
+
+
+def timeline_frame(medias: list[Media]) -> Fraction:
+    """The timeline's frame duration: its first video's, else 1/25 s."""
+    return next((m.frame for m in medias if m.has_video and m.frame), DEFAULT_FRAME)
+
+
+def frame_rate(text: str) -> Fraction:
+    """Frame duration for a rate as people write it: 25, 29.97, 23.976, 30000/1001."""
+    ntsc = {"23.976": 24, "23.98": 24, "29.97": 30, "47.952": 48, "59.94": 60, "119.88": 120}
+    try:
+        rate = Fraction(ntsc[text] * 1000, 1001) if text in ntsc else Fraction(text)
+    except (ValueError, ZeroDivisionError):
+        raise ValueError(f"not a frame rate: {text!r}") from None
+    if not 1 <= rate <= 240:
+        raise ValueError(f"frame rate {text} out of range")
+    return 1 / rate
 
 
 def _place(item: Item, m: Media, frame: Fraction) -> Placed:
