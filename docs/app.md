@@ -235,6 +235,21 @@ Findings:
 - Size not trimmed yet (unused Qt modules, Linux pulls in many libraries). Download size does
   not matter for now.
 
+## The app in the repo (`src/chronon/gui/`, since 2026-10-07)
+Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python -m chronon.gui`).
+- `window.py`: sidebar (six steps, settings), header, pages, footer; `theme.py`: the tokens of
+  `docs/design/ui/README.md` as palette and style sheet (dark / light / system).
+- `files_page.py` + `project.py`: step 1. Files and folders (searched with subfolders for audio
+  and video), read in the GUI process on a few threads (`audio.probe`, one ffprobe each), so the
+  list shows "23 / 56" while it reads. Unreadable files ask one by one (board 04).
+- `jobs.py`: a `Job` runs `chronon <command> --json` in a child process (`QProcess`) and turns
+  its events into signals; cancel = kill. The frozen app runs itself with `--worker <command>`.
+- `app.py --selftest FOLDER`: reads a folder in the window and analyses it in a worker, without
+  a screen; the app build (`.github/workflows/app.yml`) runs it on all three platforms.
+- Tests: `tests/test_gui.py` (offscreen Qt; CI installs the `gui` extra).
+- Not yet: steps 2–6 and settings (placeholders), IBM Plex (not bundled; falls back to the
+  system's sans and mono fonts).
+
 ## Later
 - Timeline view with waveforms (needs peak overviews from the core) and manual correction
 - Premiere Pro export (#7), DaVinci Resolve check (#8)
