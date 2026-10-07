@@ -198,6 +198,15 @@ QDialog {{ background: {t["panel"]}; }}
 #placeholder {{ color: {t["text2"]}; }}
 #rule {{ background: {t["divider"]}; }}
 #percent {{ font-size: 22px; }}
+#monobold {{ font-family: "{mono}"; font-size: 12px; font-weight: 600; }}
+#monotitle {{ font-family: "{mono}"; font-size: 17px; font-weight: 600; }}
+#bigclock {{ font-family: "{mono}"; font-size: 20px; padding: 0 14px; }}
+#filelist {{ border: none; background: {t["panel"]}; }}
+#filelist::item {{ border-top: 1px solid {t["divider"]}; }}
+#filelist::item:selected {{ background: {_mix(t["accent"], t["panel"], 0.10)};
+    color: {t["text"]}; }}
+#filelist::item:disabled {{ background: {t["table_header"]}; color: {t["text2"]};
+    font-size: 11px; font-weight: 600; padding: 6px 14px; }}
 QProgressBar[stopped="true"]::chunk {{ background: {t["text3"]}; }}
 #steprow {{ border-top: 1px solid {t["divider"]}; }}
 #stepmark {{ border: 1px dashed {t["control_border"]}; border-radius: 4px; color: {t["green"]};

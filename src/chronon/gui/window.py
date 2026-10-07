@@ -20,6 +20,7 @@ from chronon.gui import fmt, theme
 from chronon.gui.audition import Overviews, Player
 from chronon.gui.devices_page import DevicesPage
 from chronon.gui.files_page import FilesPage
+from chronon.gui.listen_page import ListenPage
 from chronon.gui.project import Project
 from chronon.gui.result_page import ResultPage
 from chronon.gui.sync_page import SyncPage
@@ -102,10 +103,12 @@ class Window(QMainWindow):
         self.result = ResultPage(self.project, self.tokens)
         self.result.changed.connect(self.update_chrome)
         self.result.other_reference.connect(lambda: self.show_step(1))
+        self.listen = ListenPage(self.project, self.tokens, self.player)
+        self.listen.changed.connect(self.update_chrome)
         self.pages = QStackedWidget()
-        for page in (self.files, self.devices, self.sync, self.result):
+        for page in (self.files, self.devices, self.sync, self.result, self.listen):
             self.pages.addWidget(page)
-        for label in STEPS[4:]:
+        for label in STEPS[5:]:
             self.pages.addWidget(Placeholder(f"{label}: kommt in einem der nächsten Schritte."))
         self.pages.addWidget(Placeholder("Einstellungen: kommen in einem der nächsten Schritte."))
 
