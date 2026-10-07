@@ -34,7 +34,7 @@ languages. Needed: structured notes such as `{"code": "measured_via", "file": "�
 text built from the same codes. Errors (`error` events) need the same treatment for the cases a
 user can fix: unreadable file, output folder holds the originals, not enough space.
 
-### 1.4 Progress the step list can show
+### 1.4 Progress the step list can show (done: `plan` event, `task` in progress)
 Board 06 shows a plan: "Dateien einlesen", "Wellenformen berechnen", "Spuren vergleichen:
 <Gerät>" for each device, and "Drift messen und prüfen", each with its own duration. Progress
 events today have `step` = `analysing` and a free-text `what`. Needed:

@@ -161,7 +161,8 @@ def test_overview_cli_json(tmp_path, capsys):
     cache = tmp_path / "cache"
     assert main(["overview", "--json", str(rec), "--cache", str(cache)]) == 0
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert {e["event"] for e in events[:-1]} == {"progress"}
+    assert events[0]["event"] == "plan" and [s["id"] for s in events[0]["steps"]] == ["overview"]
+    assert {e["event"] for e in events[1:-1]} == {"progress"}
     (row,) = events[-1]["files"]
     assert row["file"] == str(rec) and row["peaks"] == 40 * listen.PEAKS_PER_S
     assert np.load(row["overview"]).shape == (row["peaks"], 2)

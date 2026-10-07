@@ -21,6 +21,8 @@ this file when it is out of date.
     `docs/app.md` "Listening and waveforms".
   - `devices --json` lists every file with its start (`tmcd` timecode or BWF, `audio.Info.start`);
     `--log FILE` writes a protocol per run.
+  - Progress for the step list (board 06): a `plan` event, then `task` / `task_done` / `device`
+    in every progress event; counted in real work, decoding included (no gap at the start).
   - Progress is weighted by real work (reference decoding counts, decoded files weigh 1.7×).
   - Export: `<device>[_<track>|_<file>]_korrigiert.<wav|caf>`, bit depth ≥ 24, `--timeline
     fcpxml|none`, `--fps`, FCPXML lanes in the user's device order.
@@ -38,8 +40,7 @@ this file when it is out of date.
 ## Next steps (in order)
 1. **Build the app** from `spike/packaging` (rebase onto `main`), screen by screen following the
    boards: Dateien → Geräte & Referenz → Sync → Ergebnis → Hören → Export, plus settings.
-2. Later, only with a reason: progress has one 6–7 s gap while the first video decodes in the
-   background; issues #5, #7, #8, #11, #15.
+2. Later, only with a reason: issues #5, #7, #8, #11, #15.
 
 ## How the user works
 - Replies in German; code, comments, docs in English. Short answers, a recommendation rather
