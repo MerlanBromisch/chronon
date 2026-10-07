@@ -76,7 +76,12 @@ events today have `step` = `analysing` and a free-text `what`. Needed:
 5. Suggested reference = the device covering the most time; its loudest tracks preselected.
 6. Only "Im Finder zeigen" (Explorer / Dateimanager on Windows / Linux), no "open in Final Cut".
 7. Padding is a checkbox in the export form (default on). Also in the form: sample rate
-   (default 48 kHz) and project name (default output folder name). Bit depth stays the source's.
+   (default 48 kHz) and project name (default output folder name). No bit depth setting:
+   output = the source's bit depth, at least 24 bit (16-bit camera audio becomes 24 bit, so the
+   resampled signal is not requantised to 16 bit and needs no dither). Peaks the resampling
+   pushes above 0 dBFS (a fraction of a dB, only on material already at a limiter's ceiling)
+   are clipped as today, without a note; no limiter, no float rewrite (it would cost a second
+   write pass).
 8. Step 5 lists every file, with its verdict badge; files that need checking first.
 9. Appearance: follow the system, plus a setting System / Hell / Dunkel.
 
