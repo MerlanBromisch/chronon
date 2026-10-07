@@ -350,6 +350,7 @@ def align_files(
     rate: int = ANALYSIS_RATE,
     progress: Callable[[str, int, int], None] | None = None,
     separate: bool = False,
+    layout: devices.Layout | None = None,
 ) -> list[FileResult]:
     """Align each file to the reference, device by device (see chronon.devices): parallel
     tracks are measured once through the one that matches best, clips too short or weak to
@@ -359,7 +360,7 @@ def align_files(
     Progress is reported in seconds of audio analysed, so time remaining can be
     estimated from it."""
     report = progress or (lambda what, done, total: None)
-    devs = devices.group(ref_paths, paths, separate)
+    devs = _from_layout(layout) if layout is not None else devices.group(ref_paths, paths, separate)
     ref_tracks = devs[0].files
     refs = References.from_files(ref_tracks, rate)
     identity = Alignment(0.0, 0.0, 1.0, False, 1, 1)
@@ -436,6 +437,24 @@ def align_files(
     tell("analysing", done)
     report("analysing", 1, 1)
     return [out[Path(p)] for p in paths]
+
+
+def _from_layout(layout: devices.Layout) -> list[devices.Device]:
+    """The user's devices, the reference first: the clip holding the chosen reference tracks
+    (those first, its other parallel tracks after them); other clips of that device are
+    measured like any device's."""
+    ref = layout.devices[layout.reference]
+    clip = next(c for c in ref.clips if set(layout.tracks) <= set(c.tracks))
+    tracks = list(layout.tracks) + [t for t in clip.tracks if t not in layout.tracks]
+    out = [devices.Device(ref.name, [devices.Clip(tracks)], is_reference=True)]
+    if len(ref.clips) > 1:
+        out.append(devices.Device(ref.name, [c for c in ref.clips if c is not clip]))
+    out += [d for k, d in enumerate(layout.devices) if k != layout.reference]
+    # copies: the analysis reorders tracks (loudest first); the user's order stays
+    return [
+        devices.Device(d.name, [devices.Clip(list(c.tracks)) for c in d.clips], d.is_reference)
+        for d in out
+    ]
 
 
 def _streamed(path: Path) -> bool:
@@ -520,6 +539,12 @@ def _compose(xy: Alignment, y: Alignment) -> Alignment:
         lag = composed.ref_time(t) - t + resid
         composed = replace(composed, good_lag=tuple(float(v) for v in lag))
     return composed
+
+
+def loudest(tracks: Sequence[Path], count: int) -> list[Path]:
+    """The ``count`` loudest of parallel tracks (sum and room channels rather than a
+    rarely played instrument): the suggested reference tracks."""
+    return _by_level(tracks, ANALYSIS_RATE)[:count]
 
 
 def _by_level(tracks: Sequence[Path], rate: int) -> list[Path]:

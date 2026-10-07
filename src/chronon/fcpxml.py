@@ -55,6 +55,7 @@ class Item:
     drift_ppm: float = 0.0  # drift still in the media (0 for corrected audio)
     video_only: bool = False  # its audio is replaced by a corrected file
     group: str = ""  # device; one lane per device (default: file name without its number)
+    order: int = 0  # lane position of its device (the user's device order)
 
 
 @dataclass(frozen=True)
@@ -239,7 +240,7 @@ def _assign_lanes(placed: list[Placed]) -> None:
         lanes: list[tuple[str, list[tuple[Fraction, Fraction]]]] = []
         for p in sorted(
             (p for p in placed if p.media.has_video == video),
-            key=lambda p: (_group(p.item), p.offset),
+            key=lambda p: (p.item.order, _group(p.item), p.offset),
         ):
             span = (p.offset, p.offset + p.duration)
             for k, (group, spans) in enumerate(lanes):

@@ -32,7 +32,7 @@ import numpy as np
 import soundfile as sf
 import soxr
 
-from chronon import __version__, align, analysis, audio, fcpxml
+from chronon import __version__, align, analysis, audio, devices, fcpxml
 
 WAV_MAX_BYTES = 2**32 - 2**20  # RIFF sizes are 32-bit; leave room for the header and chunks
 CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fail at 2 GiB
@@ -95,6 +95,7 @@ class Output:
     format: str
     has_video: bool = False
     device: str = ""
+    order: int = 0  # lane position of its device (the user's device order)
     via: str = ""  # parallel track whose measurement this file shares
     check_at_s: list[float] = field(default_factory=list)  # output times to verify at
     segments: list[Segment] = field(default_factory=list)
@@ -162,15 +163,19 @@ def run(
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
     _check_outdir(outdir, refs + files)
     report = progress or (lambda what, done, total: None)
-    entries = _measured(refs, files, measured, report, separate).entries(all_refs)
-    outputs = plan(entries, outdir, rate, pad, fmt, overwrite, join)
+    done = _measured(refs, files, measured, report, separate)
+    entries = done.entries(all_refs)
+    outputs = plan(entries, outdir, rate, pad, fmt, overwrite, join, done.layout)
     _check_space(outdir, outputs)
 
     outdir.mkdir(parents=True, exist_ok=True)
     write_all(outputs, report)
 
     verify(outputs, report)
-    placed = _write_timeline(_corrected_items(outputs), outdir, name, frame) if timeline else []
+    for o in outputs:
+        o.order = _order(done.layout, o.device)
+    items = _corrected_items(outputs)
+    placed = _write_timeline(items, outdir, name, frame) if timeline else []
     for p in placed:
         if p.media.has_video:
             out = next(o for o in outputs if str(p.item.path) in {g.source for g in o.segments})
@@ -194,6 +199,7 @@ class Placement:
     error_ms: float  # worst misplacement over the clip from remaining drift / frame rounding
     device: str = ""
     notes: list[str] = field(default_factory=list)
+    order: int = 0  # lane position of its device (the user's device order)
 
 
 def sync(
@@ -213,10 +219,17 @@ def sync(
         refs, files = measured.refs, measured.files
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)
     _check_outdir(outdir, refs + files)
-    entries = _measured(refs, files, measured, progress, separate).entries(all_refs)
+    done = _measured(refs, files, measured, progress, separate)
+    entries = done.entries(all_refs)
     zero = min(0.0, *(r.alignment.offset_s for _, r in entries))
     items = [
-        fcpxml.Item(f, r.alignment.offset_s - zero, r.alignment.drift_ppm, group=r.device)
+        fcpxml.Item(
+            f,
+            r.alignment.offset_s - zero,
+            r.alignment.drift_ppm,
+            group=r.device,
+            order=_order(done.layout, r.device),
+        )
         for f, r in entries
     ]
     outdir.mkdir(parents=True, exist_ok=True)
@@ -236,6 +249,7 @@ def sync(
                 if p.media.variable_rate
                 else []
             ),
+            p.item.order,
         )
         for (f, r), p in zip(entries, placed, strict=True)
     ]
@@ -254,7 +268,11 @@ def timeline(outdir: Path | str, name: str | None = None) -> Path:
         rows = read_report(outdir / "chronon-sync.json")
         items = [
             fcpxml.Item(
-                Path(r["source"]), r["position_s"], r["drift_ppm"], group=r.get("device", "")
+                Path(r["source"]),
+                r["position_s"],
+                r["drift_ppm"],
+                group=r.get("device", ""),
+                order=r.get("order", 0),
             )
             for r in rows
         ]
@@ -298,13 +316,20 @@ def _corrected_items(outputs: Sequence[Output]) -> list[fcpxml.Item]:
     """Video originals (picture only) plus every corrected audio file."""
     items = []
     for o in outputs:
+        order = o.order
         for seg in o.segments or [_single_segment(o)]:
             if seg.has_video:
                 items.append(
-                    fcpxml.Item(Path(seg.source), seg.position_s, seg.drift_ppm, True, o.device)
+                    fcpxml.Item(
+                        Path(seg.source), seg.position_s, seg.drift_ppm, True, o.device, order
+                    )
                 )
-        items.append(fcpxml.Item(Path(o.path), o.start_s, group=o.device))
+        items.append(fcpxml.Item(Path(o.path), o.start_s, group=o.device, order=order))
     return items
+
+
+def _order(layout: devices.Layout | None, device: str) -> int:
+    return layout.order(device) if layout is not None else 0
 
 
 def _write_timeline(
@@ -336,9 +361,11 @@ def plan(
     fmt: str,
     overwrite: bool,
     join: bool = False,
+    layout: devices.Layout | None = None,
 ) -> list[Output]:
     """Where every file goes on the timeline and what gets written. With ``join`` the clips
-    of a device (not parallel tracks) become one file, gaps filled with silence."""
+    of a device (not parallel tracks) become one file, gaps filled with silence. Output
+    names come from the devices in ``layout`` (see ``_device_names``)."""
     if fmt not in FORMATS:
         raise CorrectError(f"unknown format {fmt!r}, expected one of {FORMATS}")
     zero = min(0.0, *(r.alignment.offset_s for _, r in entries))
@@ -353,10 +380,13 @@ def plan(
         groups.append([e])
         if joinable:
             by_device[r.device] = groups[-1]
-    names = _output_names([g[0][0] for g in groups])
-    names = _unique(
-        [g[0][1].device if len(g) > 1 else n for g, n in zip(groups, names, strict=True)]
-    )
+    if layout is not None:
+        names = _device_names(groups, layout)
+    else:
+        names = _output_names([g[0][0] for g in groups])
+        names = _unique(
+            [g[0][1].device if len(g) > 1 else n for g, n in zip(groups, names, strict=True)]
+        )
     outputs = []
     for group, name in zip(groups, names, strict=True):
         outputs.append(_plan_output(group, name, zero, outdir, rate, pad, fmt, overwrite))
@@ -620,6 +650,28 @@ def _with_last(blocks):
         prev = b
     if prev is not None:
         yield prev, True
+
+
+def _device_names(groups: Sequence[Sequence[Entry]], layout: devices.Layout) -> list[str]:
+    """Output names from device names: the device for a single file or joined clips,
+    ``<device>_<track>`` for parallel tracks (track name, else its number), and
+    ``<device>_<file>`` for clips not joined (just the file name when it already starts
+    with the device's, as ZOOM0003 for ZOOM)."""
+    names = []
+    for group in groups:
+        path = group[0][0]
+        dev = layout.device_of(path)
+        if dev is None:
+            names.append(path.stem)
+        elif len(group) > 1 or len(dev.files) == 1:
+            names.append(dev.name)
+        elif any(len(c.tracks) > 1 and path in c.tracks for c in dev.clips):
+            names.append(f"{dev.name}_{dev.track_label(path)}")
+        elif path.stem.casefold().startswith(dev.name.casefold()):
+            names.append(path.stem)
+        else:
+            names.append(f"{dev.name}_{path.stem}")
+    return _unique(names)
 
 
 def _output_names(sources: Sequence[Path]) -> list[str]:

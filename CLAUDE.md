@@ -14,6 +14,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `uv run chronon correct [-r TRACK]... FILE... -o OUTDIR` — write drift/rate-corrected, padded audio + report, then verify
 - `uv run chronon analyze -r TRACK -r TRACK ... FILE...` — several sample-parallel reference tracks (one desk); each file uses its best match
 - `--json` on analyze/sync/correct — JSON lines for the desktop app (contract in `docs/app.md`; change it only with a version bump)
+- `uv run chronon devices FILE... --save D.json` — devices before a reference exists + suggested reference; edit D.json (names, order, grouping, track names, reference), then `chronon analyze --devices D.json`
 - `uv run chronon analyze ... --save A.json`, then `chronon sync|correct --analysis A.json -o OUTDIR` — export without analysing again (refused if a source changed)
 - `correct --timeline fcpxml|none`, `sync|correct --fps 29.97` — timeline format (none = audio only; Premiere/Resolve later) / frame rate
 

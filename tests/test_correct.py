@@ -77,13 +77,13 @@ def test_report_and_cli(tmp_path, capsys):
     rec, cam, _ = _scene(tmp_path)
     out = tmp_path / "out"
     assert main(["correct", str(rec), str(cam), "-o", str(out)]) == 0
-    assert "cam_01_korrigiert.wav" in capsys.readouterr().out
+    assert "cam_korrigiert.wav" in capsys.readouterr().out
     report = json.loads((out / "chronon-report.json").read_text())
     assert report["schema"] == correct.REPORT_SCHEMA and report["kind"] == "correct"
     report = report["files"]
     assert [Path(r["path"]).name for r in report] == [
-        "rec_01_korrigiert.wav",
-        "cam_01_korrigiert.wav",
+        "rec_korrigiert.wav",
+        "cam_korrigiert.wav",
     ]
     assert report[1]["verified"] is True
     assert (out / "chronon-report.txt").exists()
@@ -142,7 +142,7 @@ def test_clips_of_a_device_can_be_joined(tmp_path):
     source = synth.make_source("noise", scenario.duration_s, 48_000, np.random.default_rng(seed))
     clips = [media / "cam_01.wav", media / "cam_02.wav"]
     outputs = correct.run([media / "rec_01.wav"], clips, tmp_path / "out", join=True, name="t")
-    assert [Path(o.path).name for o in outputs] == ["rec_01_korrigiert.wav", "cam_korrigiert.wav"]
+    assert [Path(o.path).name for o in outputs] == ["rec_korrigiert.wav", "cam_korrigiert.wav"]
     joined = outputs[1]
     assert joined.verified
     assert [s.source for s in joined.segments] == [str(c) for c in clips]
