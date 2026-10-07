@@ -14,6 +14,8 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      QT_QPA_PLATFORM: offscreen  # the app's tests run without a screen
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -21,13 +23,16 @@ jobs:
         run: |
           case "$RUNNER_OS" in
             macOS) brew install ffmpeg ;;
-            Linux) sudo apt-get update && sudo apt-get install -y ffmpeg ;;
+            Linux)
+              sudo apt-get update
+              # ffmpeg, and Qt's runtime libraries for the app's tests
+              sudo apt-get install -y ffmpeg libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 ;;
             Windows)
               curl -fsSL -o "$RUNNER_TEMP/ffmpeg.zip" https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip
               unzip -q "$RUNNER_TEMP/ffmpeg.zip" -d "$RUNNER_TEMP"
               cygpath -w "$(ls -d "$RUNNER_TEMP"/ffmpeg-*/bin)" >> "$GITHUB_PATH" ;;
           esac
-      - run: uv sync --locked
+      - run: uv sync --locked --extra gui
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest

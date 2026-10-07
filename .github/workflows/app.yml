@@ -1,0 +1,66 @@
+name: App build
+
+on:
+  push:
+    branches: [main]
+    paths: ["src/**", "packaging/**", "pyproject.toml", "uv.lock", ".github/workflows/app.yml"]
+  pull_request:
+    paths: ["src/**", "packaging/**", "pyproject.toml", "uv.lock", ".github/workflows/app.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            exe: dist/Chronon.app/Contents/MacOS/Chronon
+          - os: windows-latest
+            exe: dist/Chronon/Chronon.exe
+          - os: ubuntu-22.04
+            exe: dist/Chronon/Chronon
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libpulse0
+      - run: ./packaging/fetch-ffmpeg.sh
+      - name: Build
+        run: |
+          start=$(date +%s)
+          ./packaging/build.sh
+          echo "build took $(( $(date +%s) - start )) s"
+      - name: Synthetic test media (one file as AAC, decoded by the bundled ffmpeg)
+        run: |
+          uv run chronon synth synth --preset basic
+          packaging/bin/ffmpeg -v error -i synth/camera_01.wav -c:a aac synth/camera_01.m4a
+          rm synth/camera_01.wav synth/truth.json
+      - name: Frozen worker (no system ffmpeg on PATH)
+        run: |
+          start=$(date +%s)
+          PATH=/usr/bin:/bin "${{ matrix.exe }}" --worker analyze --json synth/camera_01.m4a synth/recorder_01.wav | tee worker.jsonl | tail -1 | cut -c1-300
+          echo "worker took $(( $(date +%s) - start )) s"
+          grep -q '"event": "result"' worker.jsonl
+      - name: Frozen GUI self test (offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          start=$(date +%s)
+          "${{ matrix.exe }}" --selftest synth | tail -1
+          echo "selftest took $(( $(date +%s) - start )) s"
+      - name: Size
+        run: |
+          du -sh dist/*
+          cd dist && if [ "$RUNNER_OS" = "Windows" ]; then 7z a -bd -tzip ../Chronon.zip . >/dev/null; else zip -qry ../Chronon.zip .; fi
+          cd .. && du -sh Chronon.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chronon-${{ runner.os }}
+          path: Chronon.zip
+          retention-days: 14

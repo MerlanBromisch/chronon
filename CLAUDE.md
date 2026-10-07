@@ -5,6 +5,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 ## Commands
 - `uv sync` — install (Python ≥ 3.11, numpy, scipy; ffmpeg must be on PATH)
 - `uv run pytest` — tests
+- `uv sync --extra gui`, `uv run chronon-app` — the desktop app (PySide6); its tests need `QT_QPA_PLATFORM=offscreen` without a screen
 - `uv run ruff check . && uv run ruff format .` — lint and format (line length 100)
 - `uv run chronon synth OUTDIR --preset basic|drift|multiclip|music` — synthetic test media + `truth.json`
 - `uv run chronon eval OUTDIR` — run the aligner on a synth folder and print errors against truth
@@ -31,6 +32,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `listen.py` — listening and waveforms: reference time ↔ file time (`Timeline`), excerpt pairs, cached peak overviews
 - `messages.py` — notes and user-fixable errors as codes (the app translates; English texts here)
 - `cli.py` — `chronon` command
+- `gui/` — desktop app: `window.py` (shell), `theme.py` (design tokens), `files_page.py` (step 1), `jobs.py` (`chronon … --json` in a child process); see `docs/app.md`
 
 ## Conventions
 - Code, comments and docs in English.

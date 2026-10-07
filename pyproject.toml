@@ -15,7 +15,19 @@ dependencies = [
 [project.scripts]
 chronon = "chronon.cli:main"
 
+[project.gui-scripts]
+chronon-app = "chronon.gui.__main__:main"
+
+[project.optional-dependencies]
+gui = [
+    "pyside6-addons>=6.8",
+    "pyside6-essentials>=6.8",
+]
+
 [dependency-groups]
+build = [
+    "pyinstaller>=6.10",
+]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
