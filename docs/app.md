@@ -61,7 +61,7 @@ when a field changes meaning or goes away; new fields may appear any time) and `
 ```
 - `progress`: `step` is one of the command's steps (`analysing`; `correct`: `analysing`,
   `writing`, `verifying`), `what` the detail (e.g. `analysing ZOOM0003.WAV`), `done` 0…1 within
-  the step, `left_s` the time left in the step or `null` while it cannot be estimated yet. Measured
+  the step, `left_s` the time left in the step or `null` while it cannot be estimated yet (before 3 % is done). Measured
   in real work (seconds analysed, samples written, files checked), at most ten events a second.
 - `result` (exactly one, last, on success): `files` are the same rows as the report file —
   `analyze`: offset, drift, confidence, `reliable`, windows, `via` / `drift_from` /

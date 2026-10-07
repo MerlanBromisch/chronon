@@ -329,7 +329,8 @@ class _Progress:
             self.step, self.started, self.sent = step, now, 0.0
         elapsed = now - self.started
         frac = done / total if total else 1.0
-        left = elapsed * (1 - frac) / frac if 0 < frac < 1 and elapsed > 1.5 else None
+        # no estimate before a little real work is done: it would be noise
+        left = elapsed * (1 - frac) / frac if 0.03 <= frac < 1 and elapsed > 1.5 else None
         number = self.steps.index(step) + 1 if step in self.steps else 0
         if self.out is not None:
             if frac < 1 and self.sent and now - self.sent < 0.1:
