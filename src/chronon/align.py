@@ -65,6 +65,17 @@ FINE_THREADS = min(6, os.cpu_count() or 1)
 LINK_TRIES = 4  # bridges tried for a clip that does not overlap the reference
 LEAD_TRIES = 6  # parallel tracks tried for the coarse position (loudest first)
 COARSE_REF_TRIES = 4  # reference tracks tried for the coarse position of one file
+# Progress inside one clip, from timing the musical (18 desk tracks, 7 files): the coarse
+# position (with waiting for a video's decode) takes about a third, screening the
+# (reference track, track) pairs half, measuring the finalists the rest.
+STAGE_SCREEN = 0.35
+STAGE_MEASURE = 0.85
+# Decoding a reference track for the coarse search costs about 0.27 of analysing a file of
+# the same length; it counts as work, so the first estimate of the time left is not inflated.
+REF_READ_COST = 0.27
+# A file libsndfile cannot read (video, AAC, MP3) is decoded whole by ffmpeg: about 1.7 times
+# the work per second of audio of a PCM file (same timing).
+STREAM_COST = 1.7
 BORROW_SPAN_S = 600.0  # a clip measurable over less than this takes a sibling's drift
 COARSE_CHUNK = 1 << 20  # coarse search in chunks: bounded memory on long references
 SCREEN_KEEP = 2  # ... and this many are measured in full
@@ -236,10 +247,12 @@ class _Growing:
         return self.buf[: self.n]
 
 
-def _collect(blocks, hint: int) -> np.ndarray:
+def _collect(blocks, hint: int, read: Callable[[float], None] | None = None) -> np.ndarray:
     g = _Growing(hint)
     for b in blocks:
         g.add(b)
+        if read is not None:
+            read(g.n / COARSE_RATE)
     return g.array()
 
 
@@ -257,6 +270,8 @@ class References:
         self.preferred: int | None = None  # the track whose coarse search worked last
         self._by_level: list[int] | None = None
         self.status: Callable[[str], None] = lambda text: None  # what is being read now
+        # seconds of reference audio decoded for the coarse search, as it goes
+        self.reading: Callable[[float], None] = lambda seconds: None
 
     @classmethod
     def from_arrays(cls, refs: Sequence[np.ndarray], rate: int) -> References:
@@ -298,7 +313,8 @@ class References:
                 assert self.paths is not None
                 self.status(f"reading reference track {i + 1} of {len(self)}")
                 hint = int(src.length * COARSE_RATE / src.rate) + 1
-                self._coarse[i] = _collect(audio.stream_mono(self.paths[i], COARSE_RATE), hint)
+                blocks = audio.stream_mono(self.paths[i], COARSE_RATE)
+                self._coarse[i] = _collect(blocks, hint, self.reading)
         return self._coarse[i]
 
 
@@ -355,25 +371,51 @@ def align_files(
     for _, c in clips:
         c.tracks = _by_level(c.tracks, rate)
     durations = [audio.probe(c.tracks[0]).duration_s for _, c in clips]
-    total, done = round(sum(durations)), 0.0
+    # progress weight of each clip: its length, more for files that must be decoded whole
+    durations = [
+        d * (STREAM_COST if _streamed(c.tracks[0]) else 1.0)
+        for d, (_, c) in zip(durations, clips, strict=True)
+    ]
+    ref_s = refs.sources[0].length / refs.sources[0].rate if len(refs) and clips else 0.0
+    # work in seconds of audio analysed, plus reference decoding at REF_READ_COST; one
+    # reference track is foreseen, each further one the coarse search needs is added
+    work = {"total": sum(durations) + REF_READ_COST * ref_s, "read": 0.0, "last": 0.0, "shown": 0.0}
     current = {"name": "", "done": 0.0}
-    refs.status = lambda text: report(
-        f"analysing {current['name']} ({text})", round(current["done"]), total
-    )
+    done = 0.0
+
+    def tell(what: str, clip_done: float) -> None:
+        current["done"] = clip_done
+        done = clip_done + REF_READ_COST * work["read"]
+        total = max(work["total"], done)
+        # a further reference track adds work; the bar holds still rather than going back
+        done = max(done, work["shown"] * total)
+        work["shown"] = done / total if total else 1.0
+        report(what, round(done), round(total))
+
+    def reading(seconds: float) -> None:
+        if seconds < work["last"]:  # another reference track: more work than foreseen
+            work["total"] += REF_READ_COST * ref_s
+            work["last"] = 0.0
+        work["read"] += seconds - work["last"]
+        work["last"] = seconds
+        tell(f"analysing {current['name']} (reading reference)", current["done"])
+
+    refs.status = lambda text: None
+    refs.reading = reading
     # the next clip is decoded in the background while one is analysed
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="chronon-load") as loader:
         load = lambda k: loader.submit(Recording.from_file, clips[k][1].tracks[0], rate)  # noqa: E731
         upcoming = load(0) if clips else None
         for k, ((dev, clip), duration) in enumerate(zip(clips, durations, strict=True)):
             name = clip.tracks[0].name
-            current.update(name=name, done=done)
-            report(f"analysing {name}", round(done), total)
+            current["name"] = name
+            tell(f"analysing {name}", done)
             assert upcoming is not None
             rec = upcoming.result()
             upcoming = load(k + 1) if k + 1 < len(clips) else None
 
             def stage(frac: float, base: float = done, length: float = duration, n: str = name):
-                report(f"analysing {n}", round(base + frac * length), total)
+                tell(f"analysing {n}", base + frac * length)
 
             try:
                 index, a, lead = _align_clip(refs, clip.tracks, rec, rate, stage)
@@ -385,14 +427,25 @@ def align_files(
                     out[t] = FileResult(ref_tracks[index], a, dev.name, via=via)
             del rec
             done += duration
-    _link(clips, out, rate, lambda text: report(f"analysing ({text})", total, total))
+    _link(clips, out, rate, lambda text: tell(f"analysing ({text})", done))
     for _, clip in clips:
         if clip.tracks[0] not in out:
             raise ValueError(f"{clip.tracks[0].name}: {errors[clip.tracks[0]]}")
     for dev in devs[1:]:
         _borrow_drift(dev, out)
-    report("analysing", total, total)
+    tell("analysing", done)
+    report("analysing", 1, 1)
     return [out[Path(p)] for p in paths]
+
+
+def _streamed(path: Path) -> bool:
+    """Whether a file is decoded whole (as ``Recording.from_file`` does) rather than read
+    in excerpts."""
+    try:
+        sf.info(str(path))
+    except (RuntimeError, sf.LibsndfileError):
+        return True
+    return False
 
 
 def _link(
@@ -594,7 +647,7 @@ def _align(
         other = _anchor(refs, tracks[k], tries=1)
         if other.support > anchor.support:
             anchor = other
-    stage(0.15)
+    stage(STAGE_SCREEN)
     narrow = anchor.slope is not None
     result = _align_with(refs, tracks, anchor, narrow, stage)
     if narrow and not result[1].reliable:
@@ -653,7 +706,10 @@ def _align_with(
             i, j = pair
             return _fine(refs.sources[i], tracks[j], lead.positions[idx], lag_at, margin_at)
 
-        found = {pair: look(pair, first) for pair in pairs}
+        found = {}
+        for k, pair in enumerate(pairs):
+            stage(STAGE_SCREEN + (STAGE_MEASURE - STAGE_SCREEN) * 0.8 * k / len(pairs))
+            found[pair] = look(pair, first)
         ranked = sorted(found, key=lambda q: _screen_score(found[q]), reverse=True)
         clear = _screen_score(found[ranked[0]])[0] >= min(SCREEN_CLEAR, len(first) // 4 + 1)
         finalists = ranked[:SCREEN_FINALISTS] if clear else ranked[:SCREEN_UNCLEAR_MAX]
@@ -661,10 +717,10 @@ def _align_with(
             found[pair] = found[pair] + look(pair, more)
         ranked = sorted(finalists, key=lambda q: _screen_score(found[q]), reverse=True)
         candidates = ranked[:SCREEN_KEEP]
-    stage(0.4)
+    stage(STAGE_MEASURE)
     best: tuple[int, Alignment, int] | None = None
     for k, (i, j) in enumerate(candidates):
-        stage(0.4 + 0.6 * k / len(candidates))
+        stage(STAGE_MEASURE + (1 - STAGE_MEASURE) * k / len(candidates))
         try:
             a = _measure(refs.sources[i], tracks[j], tracks[j].positions, lag_at, margin_at)
         except ValueError:

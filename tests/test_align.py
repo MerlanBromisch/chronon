@@ -260,3 +260,27 @@ def test_missing_file_is_a_clean_error(tmp_path):
     with pytest.raises(SystemExit) as e:
         main(["analyze", str(tmp_path / "a.wav"), str(tmp_path / "b.wav")])
     assert e.value.code == 1
+
+
+def test_progress_counts_reference_reading_and_only_moves_forward(tmp_path):
+    scenario = Scenario(
+        signal="speech",
+        seed=4,
+        devices=(
+            Device("desk", (Clip(0.0, 60.0),)),
+            Device("zoom", (Clip(5.0, 40.0),), drift_ppm=-8.0),
+            Device("cam", (Clip(10.0, 30.0),), drift_ppm=12.0),
+        ),
+    )
+    synth.write(scenario, tmp_path)
+    events = []
+    align.align_files(
+        [tmp_path / "desk_01.wav"],
+        [tmp_path / "zoom_01.wav", tmp_path / "cam_01.wav"],
+        progress=lambda what, done, total: events.append((what, done, total)),
+    )
+    reading = [e for e in events if "reading reference" in e[0]]
+    assert reading and reading[-1][1] > 0  # decoding the reference is work done
+    fractions = [done / total for _, done, total in events]
+    assert fractions == sorted(fractions) and fractions[-1] == 1.0
+    assert all(done <= total for _, done, total in events)

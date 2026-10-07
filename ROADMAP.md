@@ -9,7 +9,10 @@ These apply to every stage and decide trade-offs.
 - **Honest progress.** Show how long the sync will still take (time remaining), based on the
   work actually left, not a bar that just moves. ✓ in the CLI: step, percentage and time left,
   measured in seconds of audio analysed / samples written / files checked; on the musical the
-  prediction was within 1–2 s of the actual time left.
+  prediction was within 1–2 s of the actual time left. Weights from timing real runs: decoding
+  the reference counts as work, files that must be decoded whole (video, AAC) weigh 1.7×, and
+  every clip reports as it goes — the first estimate on the musical went from 245 s to ~65 s
+  (actual ~60 s).
 - **Small memory footprint.** Under 1 GB peak, independent of recording length. Baseline:
   18.5 GB; now ~690 MB ✓ — references and PCM files are read as excerpts, only video files
   are streamed once with their measurement windows kept (half precision).
