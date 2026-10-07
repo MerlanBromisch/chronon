@@ -196,10 +196,11 @@ def test_16_bit_sources_become_24_bit(tmp_path):
     assert outputs[1].verified
 
 
-def test_no_timeline_and_frame_rate(tmp_path, capsys):
+def test_timeline_none_and_frame_rate(tmp_path, capsys):
     rec, cam, _ = _scene(tmp_path)
     out = tmp_path / "out"
-    assert main(["correct", "--json", "--no-timeline", str(rec), str(cam), "-o", str(out)]) == 0
+    args = ["correct", "--json", "--timeline", "none", str(rec), str(cam), "-o", str(out)]
+    assert main(args) == 0
     assert json.loads(capsys.readouterr().out.splitlines()[-1])["timeline"] is None
     assert not list(out.glob("*.fcpxml"))
 

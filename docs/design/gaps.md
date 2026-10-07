@@ -43,7 +43,7 @@ events today have `step` = `analysing` and a free-text `what`. Needed:
   open progress work: fixed 15 % / 40 % jumps inside a clip, and setup time counted as 0 %).
 
 ### 1.5 Export options from the export form
-- **FCPXML checkbox:** `correct` always writes the timeline. Needs `--no-timeline`.
+- **Timeline format:** `correct --timeline fcpxml|none` (done; Premiere / Resolve join the list later).
 - **Timeline frame rate:** fixed to the videos' rate, or 25 fps without video. Needs `--fps` and
   the detected value in the analysis (1.1), so the dropdown can say "aus den Videos erkannt".
 - **Audio format:** see the open question in 2.

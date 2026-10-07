@@ -42,6 +42,7 @@ CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fai
 VERIFY_OFFSET_TOL_S = 5e-4
 VERIFY_DRIFT_TOL_PPM = 0.2
 FORMATS = ("auto", "wav", "caf")
+TIMELINES = ("fcpxml",)  # Final Cut Pro / Logic; Premiere (#7) and Resolve (#8) later
 # Report files (chronon-report.json, chronon-sync.json): {"schema", "chronon", "kind", "files"}.
 # Bump the schema when a field changes meaning or goes away; adding fields does not need it.
 # Schema 0 = a bare list of file rows (before 2026-10-05), still readable.
@@ -147,12 +148,15 @@ def run(
     separate: bool = False,
     join: bool = False,
     measured: analysis.Analysis | None = None,
-    timeline: bool = True,
+    timeline: str | None = "fcpxml",
     frame: Fraction | None = None,
 ) -> list[Output]:
     """Analyse (unless ``measured`` is a saved analysis), write, verify, write the timeline
-    (unless not ``timeline``; ``frame`` = its frame duration, default from its videos).
+    in the format ``timeline`` (one of TIMELINES, or None for audio only; ``frame`` = its
+    frame duration, default from its videos).
     Returns one Output per exported file (per device for joined clips)."""
+    if timeline is not None and timeline not in TIMELINES:
+        raise CorrectError(f"unknown timeline format {timeline!r}")
     if measured is not None:
         refs, files = measured.refs, measured.files
     refs, files, outdir = [Path(r) for r in refs], [Path(f) for f in files], Path(outdir)

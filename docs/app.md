@@ -69,7 +69,7 @@ when a field changes meaning or goes away; new fields may appear any time) and `
   `position_s`, `duration_s`, `has_video`, `video_error_ms`, `variable_rate`); plus
   `frame_rate` of the timeline and `analysis` (the file of `--save`, else null). `sync`: the
   `chronon-sync.json` rows; `correct`: the `chronon-report.json` rows, `timeline` null with
-  `--no-timeline`. `correct` exits 1 when `failed` > 0.
+  `--timeline none`. `correct` exits 1 when `failed` > 0.
 - **Analyse once, export later:** `analyze --save A.json` keeps the analysis;
   `sync` / `correct --analysis A.json` export from it without measuring again (the app's Sync
   step, then its Export step). The file stores each source's size and modification time; a
