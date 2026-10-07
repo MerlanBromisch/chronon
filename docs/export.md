@@ -30,7 +30,10 @@ output folder.
 - Channel layout as in the source; bit depth as in the source but at least 24 bit (16-bit camera
   audio is not requantised to 16 bit after resampling, so no dither is needed; peaks the
   resampling pushes above 0 dBFS are clipped). Target rate is a setting (default 48 kHz).
-- Corrected files are named `<device or file>_korrigiert.<wav|caf>`.
+- Corrected files are named after their device: `<device>_korrigiert` for a single file or
+  joined clips, `<device>_<track>_korrigiert` for parallel tracks (track name, else its number),
+  `<device>_<file>_korrigiert` for clips not joined (just `<file>_korrigiert` when the file name
+  starts with the device's, e.g. `ZOOM0003`). Extension `.wav` or `.caf`.
 - The reference is also written, so every output file shares the same zero.
 - **One output file per clip** by default. With `--join` the clips of a device become one file,
   gaps filled with silence; each clip keeps its own drift correction. Parallel tracks are not

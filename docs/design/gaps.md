@@ -16,7 +16,7 @@ takes ~46 s on the musical, a second time just to export. Needed:
   "video placed within ±x ms" (now computed only while the FCPXML is written) and the timeline
   frame rate detected from the videos (see 1.5).
 
-### 1.2 Devices before a reference exists
+### 1.2 Devices before a reference exists (done: `chronon devices`, `analyze --devices`)
 Step 2 lists every device first and the user then picks the reference device and its tracks.
 `devices.group` needs the reference tracks as input and names that device `"reference"`. Needed:
 - Group without a reference: `chronon devices FILE... --json` gives per device its name, kind

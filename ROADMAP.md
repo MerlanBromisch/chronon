@@ -39,7 +39,8 @@ These apply to every stage and decide trade-offs.
 
 ## Stage 2 — Robustness
 - [x] Devices: parallel tracks measured once; numbered clips grouped; short clips borrow drift — automatic, `--separate` to switch off
-- [ ] Devices: manual grouping (CLI / app)
+- [x] Devices: manual grouping in the core — `chronon devices --save`, edit, `analyze --devices`
+  (names, descriptions, order = timeline lanes, regrouping, track names, suggested reference)
 - [x] Chain clips that do not overlap the reference through clips of other devices (multi-hop)
 - [x] Confidence from window agreement; flag files without a reliable match
 - [ ] Resolve conflicting matches between files

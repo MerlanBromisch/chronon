@@ -70,6 +70,14 @@ when a field changes meaning or goes away; new fields may appear any time) and `
   `frame_rate` of the timeline and `analysis` (the file of `--save`, else null). `sync`: the
   `chronon-sync.json` rows; `correct`: the `chronon-report.json` rows, `timeline` null with
   `--timeline none`. `correct` exits 1 when `failed` > 0.
+- **Devices first:** `chronon devices --json FILE...` → `result` with `layout` (the
+  editable device layout: `devices` in timeline order with `name`, `description`, `clips`
+  (lists of parallel tracks), `track_names`; `reference`, `reference_tracks`, `suggested`) and
+  `devices` (per device `kind` = tracks / clips / video_clips / file / video, `clips`,
+  `tracks`, `files`, `sample_rate`, `channels`, `duration_s`, `has_video`). The app edits the
+  layout, saves it and runs `analyze --devices FILE`. A layout is refused when a file is in two
+  devices, two names collide (ignoring case), a name cannot be a file name, or the reference
+  tracks are not parallel tracks of the reference device.
 - **Analyse once, export later:** `analyze --save A.json` keeps the analysis;
   `sync` / `correct --analysis A.json` export from it without measuring again (the app's Sync
   step, then its Export step). The file stores each source's size and modification time; a

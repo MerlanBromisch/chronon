@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field, fields
 from fractions import Fraction
 from pathlib import Path
 
-from chronon import __version__, align, fcpxml
+from chronon import __version__, align, devices, fcpxml
 
 SCHEMA = 1  # bump when a field changes meaning or goes away
 Progress = Callable[[str, int, int], None]
@@ -37,15 +37,22 @@ class Analysis:
     stamps: dict[str, list[int]] = field(default_factory=dict)  # path -> [size, mtime ns]
     frame_rate: Fraction = Fraction(25)  # of the timeline: its videos' rate, else 25 fps
     placements: list[dict] = field(default_factory=list)  # per entry, see ``_preview``
+    layout: devices.Layout | None = None  # the devices (names, order) the analysis used
+
+    @property
+    def reference_name(self) -> str:
+        return self.layout.devices[self.layout.reference].name if self.layout else "reference"
 
     def entries(self, all_refs: bool = False) -> list[tuple[Path, align.FileResult]]:
         """Reference tracks to export, then the files. Of several reference tracks only
-        those some file matched best are exported (plus the first), unless ``all_refs``."""
+        those some file matched best are exported (plus the first), unless ``all_refs`` or
+        the reference device's other tracks are exported anyway (then all of its tracks)."""
+        all_refs = all_refs or any(r.is_reference for r in self.results)
         used = {self.refs[0]} | {r.reference for r in self.results}
         identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
         files = set(self.files)
         entries = [
-            (r, align.FileResult(r, identity, "reference", is_reference=True))
+            (r, align.FileResult(r, identity, self.reference_name, is_reference=True))
             for r in self.refs
             if (all_refs or r in used) and r not in files
         ]
@@ -68,6 +75,7 @@ class Analysis:
             "separate": self.separate,
             "frame_rate": str(self.frame_rate),
             "stamps": self.stamps,
+            "layout": self.layout.to_dict() if self.layout else None,
             "files": [
                 _result_row(f, r) | {"placement": p}
                 for f, r, p in zip(self.files, self.results, self.placements, strict=True)
@@ -97,6 +105,7 @@ class Analysis:
             stamps=data["stamps"],
             frame_rate=Fraction(data["frame_rate"]),
             placements=[r["placement"] for r in rows],
+            layout=devices.Layout.from_dict(data["layout"]) if data.get("layout") else None,
         )
 
 
@@ -105,12 +114,22 @@ def measure(
     files: Sequence[Path | str],
     progress: Progress | None = None,
     separate: bool = False,
+    layout: devices.Layout | None = None,
 ) -> Analysis:
-    """Align the files to the reference (see ``align.align_files``)."""
+    """Align the files to the reference (see ``align.align_files``): the devices of
+    ``layout`` (the user's: names, order, grouping, reference choice), else the files
+    grouped automatically with ``refs`` as the reference."""
+    if layout is not None:
+        layout.check()
+        refs = list(layout.tracks)
+        files = [f for f in layout.files if f not in refs]
     refs, files = [Path(r) for r in refs], [Path(f) for f in files]
-    results = align.align_files(refs, files, progress=progress, separate=separate)
+    if layout is None:
+        found = devices.group(refs, files, separate)
+        layout = devices.Layout(found, 0, refs)
+    results = align.align_files(refs, files, progress=progress, layout=layout)
     stamps = {str(p): _stamp(p) for p in dict.fromkeys(refs + files)}
-    a = Analysis(refs, files, results, separate, stamps)
+    a = Analysis(refs, files, results, separate, stamps, layout=layout)
     a.frame_rate, a.placements = _preview(a)
     return a
 
@@ -120,7 +139,13 @@ def _preview(a: Analysis) -> tuple[Fraction, list[dict]]:
     entries = a.entries()
     zero = min(0.0, *(r.alignment.offset_s for _, r in entries))
     items = [
-        fcpxml.Item(f, r.alignment.offset_s - zero, r.alignment.drift_ppm, group=r.device)
+        fcpxml.Item(
+            f,
+            r.alignment.offset_s - zero,
+            r.alignment.drift_ppm,
+            group=r.device,
+            order=a.layout.order(r.device) if a.layout else 0,
+        )
         for f, r in entries
     ]
     placed = fcpxml.place(items)

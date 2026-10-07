@@ -11,7 +11,7 @@ import traceback
 from collections.abc import Sequence
 from pathlib import Path
 
-from chronon import __version__, align, analysis, audio, correct, fcpxml, synth
+from chronon import __version__, align, analysis, audio, correct, devices, fcpxml, synth
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -27,9 +27,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--signal", choices=synth.SIGNALS, help="override the preset's signal")
     p.add_argument("--seed", type=int, default=0)
 
+    p = commands.add_parser(
+        "devices", help="group files into devices and suggest a reference (before analysing)"
+    )
+    p.add_argument("files", nargs="+", help="all recordings of the project")
+    p.add_argument("--separate", action="store_true", help="every file a device of its own")
+    p.add_argument(
+        "--save",
+        metavar="FILE",
+        help="keep the devices in FILE (edit names, order, grouping, reference), "
+        "then 'analyze --devices FILE'",
+    )
+    p.add_argument("--json", action="store_true", help="machine-readable output (docs/app.md)")
+
     p = commands.add_parser("analyze", help="measure offset and drift of files against a reference")
     _ref_args(p, export=False)
-    p.add_argument("files", nargs="+", help="recordings to align to the reference")
+    p.add_argument("files", nargs="*", help="recordings to align to the reference")
+    p.add_argument(
+        "--devices",
+        metavar="FILE",
+        help="the devices saved by 'chronon devices --save' (possibly edited) instead of files",
+    )
     p.add_argument(
         "--save",
         metavar="FILE",
@@ -97,6 +115,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "synth":
             return _synth(args)
+        if args.command == "devices":
+            return _devices(args, out)
         if args.command == "analyze":
             return _analyze(args, out)
         if args.command == "sync":
@@ -190,10 +210,77 @@ def _synth(args: argparse.Namespace) -> int:
     return 0
 
 
+def _devices(args: argparse.Namespace, out: _JsonOut | None) -> int:
+    infos: dict[Path, audio.Info] = {}
+
+    def probe(path: Path) -> audio.Info:
+        if path not in infos:
+            infos[path] = audio.probe(path)
+        return infos[path]
+
+    layout = devices.detect(args.files, args.separate, probe, align.loudest)
+    saved = layout.save(args.save) if args.save else None
+    rows = [_device_row(d, infos) for d in layout.devices]
+    if out is not None:
+        out.emit(
+            "result",
+            command="devices",
+            layout=layout.to_dict(),
+            devices=rows,
+            saved=None if saved is None else str(saved),
+        )
+        return 0
+    print(f"{'':2}{'device':<24} {'kind':<26} {'rate':>8}  {'duration':>9}")
+    for k, (d, row) in enumerate(zip(layout.devices, rows, strict=True)):
+        mark = "*" if k == layout.suggested else " "
+        print(
+            f"{mark} {d.name[:24]:<24} {row['kind_text']:<26} {row['sample_rate'] or '-':>8}  "
+            f"{_duration(row['duration_s']):>9}"
+        )
+    tracks = ", ".join(t.name for t in layout.tracks)
+    print(f"* suggested reference: {layout.devices[layout.suggested].name} ({tracks})")
+    if saved is not None:
+        print(f"devices: {saved}")
+    return 0
+
+
+def _device_row(d: devices.Device, infos: dict[Path, audio.Info]) -> dict:
+    """What the devices step shows: kind, rate, channels, covered time."""
+    first = [infos[c.tracks[0]] for c in d.clips]
+    tracks = max(len(c.tracks) for c in d.clips)
+    video = any(i.has_video for i in first)
+    rates = {i.sample_rate for i in first}
+    if tracks > 1:
+        kind, text = "tracks", f"{tracks} parallel tracks"
+    elif len(d.clips) > 1:
+        kind = "video_clips" if video else "clips"
+        text = f"{len(d.clips)} {'video clips' if video else 'clips'}"
+    else:
+        kind, text = ("video" if video else "file"), ("video" if video else "1 file")
+    return {
+        "name": d.name,
+        "kind": kind,
+        "kind_text": text,
+        "clips": len(d.clips),
+        "tracks": tracks,
+        "files": len(d.files),
+        "has_video": video,
+        "sample_rate": rates.pop() if len(rates) == 1 else None,
+        "channels": max(i.channels for i in first),
+        "duration_s": sum(i.duration_s for i in first),
+    }
+
+
 def _analyze(args: argparse.Namespace, out: _JsonOut | None) -> int:
-    refs, files = _refs_and_files(args)
+    layout = devices.Layout.load(args.devices) if args.devices else None
+    if layout is not None:
+        if args.files or args.ref:
+            raise ValueError("give either files or --devices, not both")
+        refs, files = list(layout.tracks), [f for f in layout.files if f not in layout.tracks]
+    else:
+        refs, files = _refs_and_files(args)
     progress = _Progress(["analysing"], out)
-    measured = analysis.measure(refs, files, progress, args.separate)
+    measured = analysis.measure(refs, files, progress, args.separate, layout)
     results = measured.results
     progress.finish()
     saved = measured.save(args.save) if args.save else None
