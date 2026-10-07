@@ -26,7 +26,7 @@ Step 2 lists every device first and the user then picks the reference device and
 - The reference device keeps its own name ("Presonus"), so `device` in the rows says which
   device it is.
 
-### 1.3 Notes as codes, not English sentences
+### 1.3 Notes as codes, not English sentences (done: `chronon.messages`, `--json` v2)
 Rows carry `notes` as English text ("measured via …", "drift from …", "clock wanders ±1.8 ms",
 "written as CAF: over 2 GiB"). The UI is German, and the language setting allows other
 languages. Needed: structured notes such as `{"code": "measured_via", "file": "…"}` and

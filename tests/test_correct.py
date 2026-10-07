@@ -166,7 +166,7 @@ def test_large_unpadded_files_stay_wav_with_time_stamp(tmp_path, monkeypatch):
     assert cam_out.verified
     monkeypatch.setattr(correct, "WAV_MAX_BYTES", 1_000_000)  # beyond what WAV can hold
     _, cam_out = correct.run([rec], [cam], tmp_path / "caf", pad=False)
-    assert cam_out.format == "caf" and any("no time stamp" in n for n in cam_out.notes)
+    assert cam_out.format == "caf" and {"code": "caf_no_time_stamp"} in cam_out.notes
 
 
 def _data_size_is_exact(path) -> bool:

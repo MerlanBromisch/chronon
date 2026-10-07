@@ -32,7 +32,8 @@ import numpy as np
 import soundfile as sf
 import soxr
 
-from chronon import __version__, align, analysis, audio, devices, fcpxml
+from chronon import __version__, align, analysis, audio, devices, fcpxml, messages
+from chronon.messages import note
 
 WAV_MAX_BYTES = 2**32 - 2**20  # RIFF sizes are 32-bit; leave room for the header and chunks
 CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fail at 2 GiB
@@ -46,7 +47,7 @@ TIMELINES = ("fcpxml",)  # Final Cut Pro / Logic; Premiere (#7) and Resolve (#8)
 # Report files (chronon-report.json, chronon-sync.json): {"schema", "chronon", "kind", "files"}.
 # Bump the schema when a field changes meaning or goes away; adding fields does not need it.
 # Schema 0 = a bare list of file rows (before 2026-10-05), still readable.
-REPORT_SCHEMA = 1
+REPORT_SCHEMA = 2  # 2: notes are codes (chronon.messages)
 BLOCK_FRAMES = 1 << 16
 # BWF time stamps count from 01:00:00:00, where a Logic project starts by default: timeline
 # zero lands on the project start ("move region to recorded position")
@@ -102,7 +103,7 @@ class Output:
     verify_offset_ms: float | None = None
     verify_drift_ppm: float | None = None
     verified: bool | None = None
-    notes: list[str] = field(default_factory=list)
+    notes: list[messages.Note] = field(default_factory=list)
 
     @property
     def start_s(self) -> float:
@@ -114,7 +115,7 @@ class Output:
         return self.frames * self.channels * (4 if self.bits == 32 else self.bits // 8)
 
 
-class CorrectError(ValueError):
+class CorrectError(messages.UserError, ValueError):
     pass
 
 
@@ -179,12 +180,10 @@ def run(
     for p in placed:
         if p.media.has_video:
             out = next(o for o in outputs if str(p.item.path) in {g.source for g in o.segments})
-            label = f"{p.item.path.name}: " if len(out.segments) > 1 else ""
-            out.notes.append(f"{label}video placed within ±{p.error_ms:.0f} ms")
+            clip = {"file": str(p.item.path)} if len(out.segments) > 1 else {}
+            out.notes.append(note("video_placed", ms=p.error_ms, **clip))
             if p.media.variable_rate:
-                out.notes.append(
-                    f"{label}variable frame rate: check picture against sound at the clip's end"
-                )
+                out.notes.append(note("variable_frame_rate", **clip))
     write_report(outputs, outdir)
     return outputs
 
@@ -198,7 +197,7 @@ class Placement:
     reliable: bool
     error_ms: float  # worst misplacement over the clip from remaining drift / frame rounding
     device: str = ""
-    notes: list[str] = field(default_factory=list)
+    notes: list[messages.Note] = field(default_factory=list)
     order: int = 0  # lane position of its device (the user's device order)
 
 
@@ -243,12 +242,7 @@ def sync(
             r.is_reference or r.alignment.reliable,
             p.error_ms,
             r.device,
-            result_notes(r)
-            + (
-                ["variable frame rate: check picture against sound at the end"]
-                if p.media.variable_rate
-                else []
-            ),
+            result_notes(r) + ([note("variable_frame_rate")] if p.media.variable_rate else []),
             p.item.order,
         )
         for (f, r), p in zip(entries, placed, strict=True)
@@ -286,10 +280,14 @@ def read_report(path: Path | str) -> list[dict]:
     """The file rows of a chronon-report.json or chronon-sync.json, any schema so far."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if isinstance(data, list):
-        return data
+        data = {"files": data}
     if data.get("schema", 0) > REPORT_SCHEMA:
         raise CorrectError(f"{path} was written by a newer Chronon ({data.get('chronon')})")
-    return data["files"]
+    rows = data["files"]
+    for row in rows:
+        if "notes" in row:
+            row["notes"] = [messages.from_text(n) for n in row["notes"]]
+    return rows
 
 
 def report_rows(outputs: Sequence[Output]) -> list[dict]:
@@ -339,17 +337,17 @@ def _write_timeline(
     return fcpxml.write(items, outdir / f"{name}.fcpxml", name, frame)
 
 
-def result_notes(r: align.FileResult) -> list[str]:
+def result_notes(r: align.FileResult) -> list[messages.Note]:
     """How a file's placement was found, for reports."""
     notes = []
     if r.is_reference:
-        notes.append("same clock and start as the reference")
+        notes.append(note("reference_clock"))
     if r.via is not None:
-        notes.append(f"measured via {r.via.name}")
+        notes.append(note("measured_via", file=str(r.via)))
     if r.drift_from is not None:
-        notes.append(f"drift from {r.drift_from.name}")
+        notes.append(note("drift_from", file=str(r.drift_from)))
     if r.linked_via is not None:
-        notes.append(f"linked via {r.linked_via.name} (no reliable overlap with the reference)")
+        notes.append(note("linked_via", file=str(r.linked_via)))
     return notes
 
 
@@ -458,7 +456,7 @@ def _plan_output(
     for _, res in group:
         out.notes.extend(n for n in result_notes(res) if n not in out.notes)
     if len(group) > 1:
-        out.notes.append("joined: " + ", ".join(Path(p).name for p, _ in group))
+        out.notes.append(note("joined", files=[str(p) for p, _ in group]))
     if fmt != "auto":
         out.format = fmt
     elif out.bytes <= CAF_ABOVE_BYTES:
@@ -468,21 +466,26 @@ def _plan_output(
         # (libsndfile's RF64 left the data size at 0xFFFFFFFF, so the chunk Logic appends to
         # a file was read as audio by other programs: not used.)
         out.format = "wav"
-        out.notes.append("WAV over 2 GiB: a few programs may not read it")
+        out.notes.append(note("wav_over_2gib"))
     else:
         out.format = "caf"
-        out.notes.append("written as CAF: over 2 GiB")
+        out.notes.append(note("caf_over_2gib"))
     if out.format not in BWF_FORMATS and not pad:
-        out.notes.append("no time stamp in CAF: place it from the timeline file")
+        out.notes.append(note("caf_no_time_stamp"))
     if fmt == "wav" and out.bytes > WAV_MAX_BYTES:
-        raise CorrectError(f"{src.name}: {out.bytes / 2**30:.1f} GiB is too large for WAV")
+        raise CorrectError(
+            f"{src.name}: {out.bytes / 2**30:.1f} GiB is too large for WAV",
+            "too_large_for_wav",
+            file=str(src),
+            bytes=out.bytes,
+        )
     if not is_ref and not all(res.alignment.reliable for _, res in group):
-        out.notes.append("NO RELIABLE MATCH: position and drift may be wrong")
+        out.notes.append(note("no_reliable_match"))
     if out.has_video:
-        out.notes.append("audio of a video file; the video itself is not changed")
+        out.notes.append(note("video_unchanged"))
     path = outdir / f"{name}{SUFFIX}.{out.format}"
     if path.exists() and not overwrite:
-        raise CorrectError(f"{path} exists (use --overwrite)")
+        raise CorrectError(f"{path} exists (use --overwrite)", "output_exists", file=str(path))
     out.path = str(path)
     return out
 
@@ -591,7 +594,7 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
             )
         except ValueError as e:
             out.verified = False
-            out.notes.append(f"verification failed: {e}")
+            out.notes.append(note("not_verifiable", reason=str(e)))
             continue
         # the error in the middle of the measured part, not extrapolated into padding
         mid = (min(a.good_s) + max(a.good_s)) / 2 if a.good_s else 0.0
@@ -602,14 +605,14 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
             abs(error) <= VERIFY_OFFSET_TOL_S and abs(a.drift_ppm) <= VERIFY_DRIFT_TOL_PPM
         )
         if not out.verified:
-            out.notes.append("VERIFICATION FAILED: output is not in sync with the reference")
+            out.notes.append(note("verification_failed"))
     for o in outputs:
         lead = by_source.get(o.via)
         if o.via and o.via != o.source and lead is not None:
             o.verified = lead.verified
             o.verify_offset_ms, o.verify_drift_ppm = lead.verify_offset_ms, lead.verify_drift_ppm
             if lead.verified is False:
-                o.notes.append("VERIFICATION FAILED (via its parallel track)")
+                o.notes.append(note("verification_failed_via", file=o.via))
     report("verifying", len(todo), len(todo))
 
 
@@ -633,7 +636,7 @@ def format_report(outputs: Sequence[Output]) -> str:
         )
         lines.append(
             f"{Path(o.path).name:<28} {o.position_s:>12.6f} {o.drift_ppm:>+10.2f} "
-            f"{o.in_rate:>6}>{o.out_rate:<5} {check:>22}  {', '.join(o.notes)}"
+            f"{o.in_rate:>6}>{o.out_rate:<5} {check:>22}  {messages.texts(o.notes)}"
         )
     return "\n".join(lines)
 
@@ -711,7 +714,10 @@ def _check_outdir(outdir: Path, inputs: Sequence[Path]) -> None:
         if p.parent.exists() and os.path.samefile(p.parent, outdir):
             raise CorrectError(
                 f"output folder {outdir} holds the input {p.name}; choose a separate folder "
-                "(originals are never written next to)"
+                "(originals are never written next to)",
+                "outdir_holds_input",
+                folder=str(outdir),
+                file=str(p),
             )
 
 
@@ -723,5 +729,9 @@ def _check_space(outdir: Path, outputs: Sequence[Output]) -> None:
     free = shutil.disk_usage(probe_dir).free
     if need > 0.95 * free:
         raise CorrectError(
-            f"needs {need / 2**30:.1f} GiB but only {free / 2**30:.1f} GiB are free on {probe_dir}"
+            f"needs {need / 2**30:.1f} GiB but only {free / 2**30:.1f} GiB are free on {probe_dir}",
+            "not_enough_space",
+            folder=str(probe_dir),
+            need_bytes=need,
+            free_bytes=free,
         )

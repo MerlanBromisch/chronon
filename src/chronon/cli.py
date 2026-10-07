@@ -11,7 +11,8 @@ import traceback
 from collections.abc import Sequence
 from pathlib import Path
 
-from chronon import __version__, align, analysis, audio, correct, devices, fcpxml, synth
+from chronon import __version__, align, analysis, audio, correct, devices, fcpxml, messages, synth
+from chronon.messages import note
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -130,14 +131,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _eval(args)
     except (audio.AudioError, ValueError) as e:
         if out is not None:
-            out.emit("error", message=str(e))
+            out.error(e)
             return 1
         parser.exit(1, f"chronon: error: {e}\n")
     except Exception as e:
         if out is None:
             raise
         traceback.print_exc()
-        out.emit("error", message=f"{type(e).__name__}: {e}")
+        out.emit("error", code=None, message=f"{type(e).__name__}: {e}")
         return 1
     return 2
 
@@ -305,11 +306,11 @@ def _analyze(args: argparse.Namespace, out: _JsonOut | None) -> int:
     )
     for path, r in zip(files, results, strict=True):
         a = r.alignment
-        via = r.reference.name if len(refs) > 1 and not r.is_reference else None
+        via = r.reference if len(refs) > 1 and not r.is_reference else None
         print(
             f"{Path(path).name:<24} {r.device[:12]:<12} {a.offset_s:>13.6f} {a.drift_ppm:>+10.2f} "
             f"{a.confidence:>10.2f}  {a.windows_used:>4}/{a.windows_total:<4} "
-            + ", ".join(([] if r.is_reference else _notes(a, via)) + correct.result_notes(r))
+            + messages.texts(([] if r.is_reference else _notes(a, via)) + correct.result_notes(r))
         )
     if saved is not None:
         print(f"analysis: {saved}")
@@ -318,7 +319,7 @@ def _analyze(args: argparse.Namespace, out: _JsonOut | None) -> int:
 
 def _analysis_row(path: str, r: align.FileResult, several_refs: bool) -> dict:
     a = r.alignment
-    via = r.reference.name if several_refs and not r.is_reference else None
+    via = r.reference if several_refs and not r.is_reference else None
     return {
         "file": str(path),
         "device": r.device,
@@ -417,10 +418,10 @@ def _sync(args: argparse.Namespace, out: _JsonOut | None) -> int:
         return 0
     print(f"{'file':<28} {'timeline s':>12} {'drift ppm':>10} {'off at ends':>12}  notes")
     for r in result:
-        notes = ([] if r.reliable else ["NO RELIABLE MATCH"]) + r.notes
+        notes = ([] if r.reliable else [note("no_reliable_match")]) + r.notes
         print(
             f"{Path(r.source).name:<28} {r.position_s:>12.6f} {r.drift_ppm:>+10.2f} "
-            f"{r.error_ms:>9.1f} ms  {', '.join(notes)}"
+            f"{r.error_ms:>9.1f} ms  {messages.texts(notes)}"
         )
     print(f"timeline: {_timeline_path(args)}")
     return 0
@@ -429,7 +430,7 @@ def _sync(args: argparse.Namespace, out: _JsonOut | None) -> int:
 class _JsonOut:
     """``--json``: one JSON object per line on stdout, flushed at once (see docs/app.md)."""
 
-    VERSION = 1
+    VERSION = 2  # 2: notes and errors carry codes (chronon.messages)
 
     def __init__(self):
         # A windowed (no console) app on Windows can start its child with sys.stdout = None
@@ -441,6 +442,14 @@ class _JsonOut:
     def emit(self, event: str, **fields) -> None:
         self.stream.write(json.dumps({"v": self.VERSION, "event": event, **fields}) + "\n")
         self.stream.flush()
+
+    def error(self, e: Exception) -> None:
+        """An ``error`` event: the code and its fields when the user can fix it, else
+        ``code`` null and only the message."""
+        if isinstance(e, messages.UserError) and e.code is not None:
+            self.emit("error", code=e.code, message=str(e), **e.fields)
+        else:
+            self.emit("error", code=None, message=str(e))
 
 
 class _Progress:
@@ -504,16 +513,16 @@ def _duration(seconds: float) -> str:
     return f"{seconds // 60} min {seconds % 60:02d} s"
 
 
-def _notes(a: align.Alignment, via: str | None) -> list[str]:
+def _notes(a: align.Alignment, via: Path | None) -> list[messages.Note]:
     notes = []
     if not a.reliable:
-        notes.append("NO RELIABLE MATCH")
+        notes.append(note("no_reliable_match"))
     if a.inverted:
-        notes.append("inverted")
+        notes.append(note("inverted"))
     if a.wander_ms > 1.0:
-        notes.append(f"clock wanders ±{a.wander_ms:.1f} ms")
+        notes.append(note("clock_wanders", ms=a.wander_ms))
     if via:
-        notes.append(f"via {via}")
+        notes.append(note("matched_track", file=str(via)))
     return notes
 
 
