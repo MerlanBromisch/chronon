@@ -67,10 +67,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p.add_argument("--overwrite", action="store_true", help="replace existing output files")
     p.add_argument(
-        "--no-timeline",
-        dest="timeline",
-        action="store_false",
-        help="write only the corrected audio, no .fcpxml",
+        "--timeline",
+        choices=(*correct.TIMELINES, "none"),
+        default="fcpxml",
+        help="timeline for: fcpxml = Final Cut Pro / Logic (default), none = audio only",
     )
     p.add_argument("--name", help="project name (default: the output folder's name)")
     p.add_argument(
@@ -281,7 +281,7 @@ def _correct(args: argparse.Namespace, out: _JsonOut | None) -> int:
         separate=args.separate,
         join=args.join,
         measured=_saved(args),
-        timeline=args.timeline,
+        timeline=None if args.timeline == "none" else args.timeline,
         frame=args.fps,
     )
     progress.finish()
@@ -291,7 +291,7 @@ def _correct(args: argparse.Namespace, out: _JsonOut | None) -> int:
             "result",
             command="correct",
             report=str(Path(args.out) / "chronon-report.json"),
-            timeline=str(_timeline_path(args)) if args.timeline else None,
+            timeline=None if args.timeline == "none" else str(_timeline_path(args)),
             failed=len(failed),
             files=correct.report_rows(outputs),
         )
