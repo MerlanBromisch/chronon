@@ -144,6 +144,19 @@ Fonts: IBM Plex Sans (UI) and IBM Plex Mono (numbers, times, paths). Sizes: 22/6
   per platform (macOS `~/Library/Caches/Chronon`, Windows `%LOCALAPPDATA%\Chronon\Cache`,
   Linux `~/.cache/chronon`); the boards show the macOS one.
 
+## Corrections to the boards (apply when building, no new boards)
+
+Decided 2026-10-07 after reviewing revision 1:
+
+1. **Sync mode (11a):** no FCPXML checkbox. The timeline is the only output of "Sync", so the row
+   is left out (or shown ticked and disabled). The checkbox exists only for "Korrigiert".
+2. **Move / merge dialogs (05b, 05c):** multitrack devices (Presonus, x32) are not offered as
+   targets: show them disabled. Only clip devices are regrouped or merged.
+3. **Names of parallel tracks (14):** a multitrack device is written as one file per track,
+   named `<Gerät>_<Spur>_korrigiert.<ext>` with the track's name (`x32_Summe L_korrigiert.wav`),
+   or its number when unnamed (`x32_17_korrigiert.wav`). Board 14's single
+   `x32_korrigiert.caf` is sample data only.
+
 ## Not designed yet
 
 - Applying the appearance setting live (the row is designed, both themes exist).
