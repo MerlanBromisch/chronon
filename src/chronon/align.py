@@ -31,10 +31,11 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -80,6 +81,14 @@ REF_READ_COST = 0.27
 # A file libsndfile cannot read (video, AAC, MP3) is decoded whole by ffmpeg: about 1.7 times
 # the work per second of audio of a PCM file (same timing).
 STREAM_COST = 1.7
+STREAM_DECODE_COST = STREAM_COST - 1.0  # of that, the decoding (in the background)
+# Reading a file's length and level: about 0.1 s, as much as analysing ~30 s of audio.
+READ_COST = 30.0
+# A clip linked through a bridge: measured again, and the bridge read as a reference.
+LINK_COST = 1.0 + REF_READ_COST
+# Inside a clip without screening (one reference track, one track): the coarse position and
+# the measurement take about as long as each other (synthetic 20-25 min clips).
+STAGE_ALONE = 0.5
 BORROW_SPAN_S = 600.0  # a clip measurable over less than this takes a sibling's drift
 COARSE_CHUNK = 1 << 20  # coarse search in chunks: bounded memory on long references
 SCREEN_KEEP = 2  # ... and this many are measured in full
@@ -196,17 +205,21 @@ class Recording:
         return cls.from_blocks([x], len(x), rate)
 
     @classmethod
-    def from_file(cls, path: Path | str, rate: int) -> Recording:
+    def from_file(
+        cls, path: Path | str, rate: int, read: Callable[[float], None] | None = None
+    ) -> Recording:
+        """``read`` hears the seconds decoded so far."""
         try:
             source = audio.FileSource(path, rate)
         except (RuntimeError, sf.LibsndfileError):
             info = audio.probe(path)  # not PCM: stream once, keep the windows
             hint = int(info.frames * rate / info.sample_rate)
-            return cls.from_blocks(audio.stream_mono(path, rate), hint, rate)
+            blocks = _counted(audio.stream_mono(path, rate), rate, read)
+            return cls.from_blocks(blocks, hint, rate)
         win = _window_length(source.length, rate)
         rec = cls._lazy(source, _positions(source.length, win, rate), win)
         hint = int(source.length * COARSE_RATE / rate) + 1
-        rec.coarse = _collect(audio.stream_mono(path, COARSE_RATE), hint)
+        rec.coarse = _collect(audio.stream_mono(path, COARSE_RATE), hint, read)
         return rec
 
     @classmethod
@@ -253,6 +266,16 @@ class _Growing:
 
     def array(self) -> np.ndarray:
         return self.buf[: self.n]
+
+
+def _counted(blocks, rate: int, read: Callable[[float], None] | None):
+    """The blocks, telling ``read`` the seconds passed so far."""
+    n = 0
+    for b in blocks:
+        yield b
+        n += len(b)
+        if read is not None:
+            read(n / rate)
 
 
 def _collect(blocks, hint: int, read: Callable[[float], None] | None = None) -> np.ndarray:
@@ -352,6 +375,110 @@ class FileResult:
     linked_via: Path | None = None  # placed through this clip of another device (bridge)
 
 
+@dataclass(frozen=True)
+class Step:
+    """A step of an analysis as the app's step list shows it."""
+
+    id: str  # read, reference, compare:<k>, drift
+    kind: str  # read | reference | compare | drift
+    device: str | None = None
+
+
+def _plan(devs: Sequence[devices.Device]) -> list[Step]:
+    steps = [Step("read", "read"), Step("reference", "reference", devs[0].name)]
+    for k, dev in enumerate(devs[1:], 1):
+        steps.append(Step(f"compare:{k}", "compare", dev.name))
+    return steps + [Step("drift", "drift")]
+
+
+def _device_step(devs: Sequence[devices.Device], dev: devices.Device) -> str:
+    return f"compare:{next(k for k, d in enumerate(devs) if d is dev)}"
+
+
+class _Work:
+    """Progress of an analysis in real work (seconds of audio analysed, see the *_COST
+    constants), step by step; safe to use from several threads.
+
+    ``progress`` hears (what, done, total) of the whole analysis; if it has a ``plan``
+    method it first gets the steps, and then every report names its step (``task``), the
+    share of that step done (``task_done``) and its device. The whole stays at 0 until
+    every step's work is foreseen (``ready``), and never goes back: when a step turns out
+    bigger than foreseen (``grow``), the bar holds still."""
+
+    def __init__(self, steps: list[Step], progress: Callable[..., None] | None):
+        self.steps = {s.id: s for s in steps}
+        self.done = dict.fromkeys(self.steps, 0.0)
+        self.total = dict.fromkeys(self.steps, 0.0)
+        self.report = progress or (lambda what, done, total, **task: None)
+        self.detailed = hasattr(progress, "plan")
+        self.known = False
+        self.shown = 0.0
+        self.what = ""
+        self.current = steps[0].id  # the step running in the foreground
+        self.lock = threading.Lock()
+        if self.detailed:
+            progress.plan([asdict(s) for s in steps])  # type: ignore[union-attr]
+
+    def foresee(self, step: str, units: float) -> None:
+        with self.lock:
+            self.total[step] += max(units, 0.0)
+
+    def ready(self) -> None:
+        self.known = True
+
+    def grow(self, step: str, units: float) -> None:
+        self.foresee(step, units)
+
+    def start(self, step: str, what: str) -> None:
+        with self.lock:
+            self.current = step
+        self._tell(what)
+
+    def add(self, step: str, units: float, what: str | None = None) -> None:
+        """Work done on ``step``; on another step than the current one (a clip decoded in
+        the background) it counts for the whole, but the report stays on the current step."""
+        with self.lock:
+            self.done[step] = min(self.done[step] + max(units, 0.0), self.total[step])
+        self._tell(what if step == self.current else None)
+
+    def finish(self, step: str) -> None:
+        with self.lock:
+            self.done[step] = self.total[step]
+            finished = step == self.current
+        self._tell(None, finished)
+
+    def _tell(self, what: str | None, finished: bool = False) -> None:
+        with self.lock:
+            step = self.current
+            if what is not None:
+                self.what = what
+            total = sum(self.total.values())
+            if self.known and total > 0:
+                self.shown = max(self.shown, sum(self.done.values()) / total)
+            scale = 1_000_000
+            done, whole = round(self.shown * scale), scale
+            share = self.done[step] / self.total[step] if self.total[step] else 0.0
+            share = 1.0 if finished else share
+            text = self.what
+        if self.detailed:
+            device = self.steps[step].device
+            self.report(text, done, whole, task=step, task_done=share, device=device)
+        else:
+            self.report(text, done, whole)
+
+
+def _stage(work: _Work, step: str, length: float, what: str) -> Callable[[float], None]:
+    """Report the share of a clip's analysis done (0..1, never back) as work on ``step``."""
+    last = {"frac": 0.0}
+
+    def stage(frac: float) -> None:
+        frac = max(frac, last["frac"])
+        work.add(step, (frac - last["frac"]) * length, what)
+        last["frac"] = frac
+
+    return stage
+
+
 def align_files(
     ref_paths: Sequence[Path | str],
     paths: Sequence[Path | str],
@@ -367,64 +494,84 @@ def align_files(
 
     Progress is reported in seconds of audio analysed, so time remaining can be
     estimated from it."""
-    report = progress or (lambda what, done, total: None)
     devs = _from_layout(layout) if layout is not None else devices.group(ref_paths, paths, separate)
     ref_tracks = devs[0].files
+    clips = [(d, c) for d in devs[1:] for c in d.clips]
+    work = _Work(_plan(devs), progress)
     refs = References.from_files(ref_tracks, rate)
     identity = Alignment(0.0, 0.0, 1.0, False, 1, 1)
     out: dict[Path, FileResult] = {
         t: FileResult(t, identity, devs[0].name, is_reference=True) for t in ref_tracks
     }
     errors: dict[Path, str] = {}
-    clips = [(d, c) for d in devs[1:] for c in d.clips]
+
+    # read: lengths and levels of every file
+    work.foresee("read", READ_COST * (sum(len(c.tracks) for _, c in clips) + len(refs)))
+    work.start("read", "reading files")
+    durations, decode, analyse = [], [], []
     for _, c in clips:
         c.tracks = _by_level(c.tracks, rate)
-    durations = [audio.probe(c.tracks[0]).duration_s for _, c in clips]
-    # progress weight of each clip: its length, more for files that must be decoded whole
-    durations = [
-        d * (STREAM_COST if _streamed(c.tracks[0]) else 1.0)
-        for d, (_, c) in zip(durations, clips, strict=True)
-    ]
-    ref_s = refs.sources[0].length / refs.sources[0].rate if len(refs) and clips else 0.0
-    # work in seconds of audio analysed, plus reference decoding at REF_READ_COST; one
-    # reference track is foreseen, each further one the coarse search needs is added
-    work = {"total": sum(durations) + REF_READ_COST * ref_s, "read": 0.0, "last": 0.0, "shown": 0.0}
-    current = {"name": "", "done": 0.0}
-    done = 0.0
+        duration = audio.probe(c.tracks[0]).duration_s
+        streamed = _streamed(c.tracks[0])
+        durations.append(duration)
+        decode.append(duration * (STREAM_DECODE_COST if streamed else REF_READ_COST))
+        analyse.append(duration)
+        work.add("read", READ_COST * len(c.tracks))
+    refs.order()  # levels of the reference tracks
+    for k, (dev, _) in enumerate(clips):
+        work.foresee(_device_step(devs, dev), decode[k] + analyse[k])
+    if clips and len(refs):
+        work.foresee("reference", REF_READ_COST * refs.sources[0].length / refs.sources[0].rate)
+    work.foresee("drift", 1.0)
+    work.ready()
+    work.finish("read")
 
-    def tell(what: str, clip_done: float) -> None:
-        current["done"] = clip_done
-        done = clip_done + REF_READ_COST * work["read"]
-        total = max(work["total"], done)
-        # a further reference track adds work; the bar holds still rather than going back
-        done = max(done, work["shown"] * total)
-        work["shown"] = done / total if total else 1.0
-        report(what, round(done), round(total))
+    # reference: the coarse copy of the track the coarse search tries first
+    current = {"step": "reference", "what": "reading the reference"}
+    read_so_far = {"s": 0.0}
 
     def reading(seconds: float) -> None:
-        if seconds < work["last"]:  # another reference track: more work than foreseen
-            work["total"] += REF_READ_COST * ref_s
-            work["last"] = 0.0
-        work["read"] += seconds - work["last"]
-        work["last"] = seconds
-        tell(f"analysing {current['name']} (reading reference)", current["done"])
+        if seconds < read_so_far["s"]:
+            read_so_far["s"] = 0.0
+        step = current["step"]
+        if step != "reference":  # a further reference track: more work than foreseen
+            work.grow(step, REF_READ_COST * (seconds - read_so_far["s"]))
+        work.add(step, REF_READ_COST * (seconds - read_so_far["s"]), current["what"])
+        read_so_far["s"] = seconds
 
-    refs.status = lambda text: None
     refs.reading = reading
+    if clips and len(refs):
+        work.start("reference", "reading the reference")
+        refs.coarse(refs.order()[0])
+    work.finish("reference")
+    read_so_far["s"] = 0.0
+
+    def loader(k: int) -> Recording:
+        """Decode clip ``k`` (its coarse copy, or all of a streamed file), counting the work."""
+        step = _device_step(devs, clips[k][0])
+        credited = {"units": 0.0}
+
+        def decoded(seconds: float) -> None:
+            units = min(decode[k] * seconds / max(durations[k], 1e-9), decode[k])
+            work.add(step, units - credited["units"])
+            credited["units"] = units
+
+        rec = Recording.from_file(clips[k][1].tracks[0], rate, decoded)
+        work.add(step, decode[k] - credited["units"])
+        return rec
+
     # the next clip is decoded in the background while one is analysed
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="chronon-load") as loader:
-        load = lambda k: loader.submit(Recording.from_file, clips[k][1].tracks[0], rate)  # noqa: E731
-        upcoming = load(0) if clips else None
-        for k, ((dev, clip), duration) in enumerate(zip(clips, durations, strict=True)):
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="chronon-load") as pool:
+        upcoming = pool.submit(loader, 0) if clips else None
+        for k, (dev, clip) in enumerate(clips):
             name = clip.tracks[0].name
-            current["name"] = name
-            tell(f"analysing {name}", done)
+            step = _device_step(devs, dev)
+            current.update(step=step, what=f"analysing {name}")
+            work.start(step, f"analysing {name}")
             assert upcoming is not None
             rec = upcoming.result()
-            upcoming = load(k + 1) if k + 1 < len(clips) else None
-
-            def stage(frac: float, base: float = done, length: float = duration, n: str = name):
-                tell(f"analysing {n}", base + frac * length)
+            upcoming = pool.submit(loader, k + 1) if k + 1 < len(clips) else None
+            stage = _stage(work, step, analyse[k], f"analysing {name}")
 
             began = time.monotonic()
             try:
@@ -443,16 +590,19 @@ def align_files(
                 via = lead if len(clip.tracks) > 1 else None
                 for t in clip.tracks:
                     out[t] = FileResult(ref_tracks[index], a, dev.name, via=via)
+            stage(1.0)
+            if k + 1 == len(clips) or _device_step(devs, clips[k + 1][0]) != step:
+                work.finish(step)
             del rec
-            done += duration
-    _link(clips, out, rate, lambda text: tell(f"analysing ({text})", done))
+    current.update(step="drift", what="placing clips")
+    work.start("drift", "placing clips")
+    _link(clips, out, rate, work)
     for _, clip in clips:
         if clip.tracks[0] not in out:
             raise ValueError(f"{clip.tracks[0].name}: {errors[clip.tracks[0]]}")
     for dev in devs[1:]:
         _borrow_drift(dev, out)
-    tell("analysing", done)
-    report("analysing", 1, 1)
+    work.finish("drift")
     for p in paths:
         _log_result(Path(p), out[Path(p)])
     return [out[Path(p)] for p in paths]
@@ -513,7 +663,7 @@ def _link(
     clips: Sequence[tuple[devices.Device, devices.Clip]],
     out: dict[Path, FileResult],
     rate: int,
-    status: Callable[[str], None],
+    work: _Work | None = None,
 ) -> None:
     """Place clips that found no reliable match with the reference through clips of other
     devices that did (a camera that started before the desk, but overlaps the Zoom). The
@@ -539,14 +689,22 @@ def _link(
             for _, bridge in bridges[:LINK_TRIES]:
                 rb = out[bridge.tracks[0]]
                 track = rb.via or bridge.tracks[0]
-                status(f"linking {clip.tracks[0].name} via {track.name}")
+                what = f"linking {clip.tracks[0].name} via {track.name}"
+                stage: Callable[[float], None] = lambda frac: None  # noqa: E731
+                if work is not None:
+                    # each try is work nobody foresaw: the step grows, the bar holds still
+                    length = LINK_COST * audio.probe(clip.tracks[0]).duration_s
+                    work.grow("drift", length)
+                    stage = _stage(work, "drift", length, what)
                 rec = rec or Recording.from_file(clip.tracks[0], rate)
                 try:
                     _, a, lead = _align_clip(
-                        References.from_files([track], rate), clip.tracks, rec, rate, lambda f: None
+                        References.from_files([track], rate), clip.tracks, rec, rate, stage
                     )
                 except ValueError:
                     continue
+                finally:
+                    stage(1.0)
                 if a.reliable and (best is None or _rank(a) > _rank(best[0])):
                     best = (a, _compose(a, rb.alignment), track, lead)
             if best is None:
@@ -704,7 +862,12 @@ def _align(
     single = isinstance(recs, Recording)
     tracks = [recs] if single else list(recs)
     stage = stage or (lambda frac: None)
-    anchor = _anchor(refs, tracks[0], tries=1 if len(tracks) > 1 else 0)
+    # the screening stage only exists for several (reference track, track) pairs
+    alone = len(refs) * len(tracks) == 1
+    share = STAGE_ALONE if alone else STAGE_SCREEN
+    anchor = _anchor(
+        refs, tracks[0], tries=1 if len(tracks) > 1 else 0, tick=lambda f: stage(share * f)
+    )
     for k in range(1, min(len(tracks), LEAD_TRIES)):
         if anchor.support >= min(2, anchor.tried):
             break  # parallel tracks start together: one track's anchor holds for all
@@ -714,7 +877,7 @@ def _align(
         other = _anchor(refs, tracks[k], tries=1)
         if other.support > anchor.support:
             anchor = other
-    stage(STAGE_SCREEN)
+    stage(share)
     narrow = anchor.slope is not None
     result = _align_with(refs, tracks, anchor, narrow, stage)
     if narrow and not result[1].reliable:
@@ -784,12 +947,16 @@ def _align_with(
             found[pair] = found[pair] + look(pair, more)
         ranked = sorted(finalists, key=lambda q: _screen_score(found[q]), reverse=True)
         candidates = ranked[:SCREEN_KEEP]
-    stage(STAGE_MEASURE)
+    begin = STAGE_ALONE if len(pairs) == 1 else STAGE_MEASURE
+    stage(begin)
     best: tuple[int, Alignment, int] | None = None
     for k, (i, j) in enumerate(candidates):
-        stage(STAGE_MEASURE + (1 - STAGE_MEASURE) * k / len(candidates))
+
+        def part(frac: float, k: int = k) -> None:
+            stage(begin + (1 - begin) * (k + frac) / len(candidates))
+
         try:
-            a = _measure(refs.sources[i], tracks[j], tracks[j].positions, lag_at, margin_at)
+            a = _measure(refs.sources[i], tracks[j], tracks[j].positions, lag_at, margin_at, part)
         except ValueError:
             continue
         if best is None or _rank(a) > _rank(best[1]):
@@ -811,13 +978,15 @@ def _rank(a: Alignment) -> tuple[bool, int, float]:
     return (a.reliable, a.windows_used, a.confidence)
 
 
-def _anchor(refs: References, rec: Recording, tries: int = 0) -> _Anchor:
+def _anchor(
+    refs: References, rec: Recording, tries: int = 0, tick: Callable[[float], None] | None = None
+) -> _Anchor:
     """Coarse position: try reference tracks (the one that worked last first, at most
     ``tries`` or COARSE_REF_TRIES; each costs decoding a whole track) until one gives a
-    clear answer."""
+    clear answer. ``tick`` hears the share of the first try done (usually the only one)."""
     fallback = None
-    for i in refs.order()[: tries or COARSE_REF_TRIES]:
-        found = _coarse(refs.coarse(i), rec.coarse, COARSE_RATE)
+    for n, i in enumerate(refs.order()[: tries or COARSE_REF_TRIES]):
+        found = _coarse(refs.coarse(i), rec.coarse, COARSE_RATE, tick if n == 0 else None)
         if found is None:
             continue
         if found.support >= min(2, found.tried):
@@ -837,9 +1006,12 @@ def _measure(
     positions: np.ndarray,
     lag_at: Callable[[float], float],
     margin_at: Callable[[float], float],
+    part: Callable[[float], None] | None = None,
 ) -> Alignment:
-    """Fine windows, consensus line, then the agreeing windows again with drift undone."""
-    matches = _fine(ref, rec, positions, lag_at, margin_at)
+    """Fine windows, consensus line, then the agreeing windows again with drift undone.
+    ``part`` hears the share done (0..1): the first pass counts two thirds."""
+    part = part or (lambda frac: None)
+    matches = _fine(ref, rec, positions, lag_at, margin_at, tick=lambda f: part(f * 2 / 3))
     if not matches:
         raise ValueError("the files do not seem to overlap")
     t, lag, ncc = _arrays(matches)
@@ -857,6 +1029,7 @@ def _measure(
         lag_at=lambda t: first.ref_time(t) - t,
         margin_at=lambda t: REFINE_MARGIN_S,
         stretch=stretch,
+        tick=lambda f: part(2 / 3 + f / 3),
     )
     if len(refined) < 2:
         return first
@@ -948,7 +1121,9 @@ def _energy_ok(win: np.ndarray, mean_power: float) -> bool:
 # --- stages ----------------------------------------------------------------
 
 
-def _coarse(ref: np.ndarray, other: np.ndarray, rate: int) -> _Anchor | None:
+def _coarse(
+    ref: np.ndarray, other: np.ndarray, rate: int, tick: Callable[[float], None] | None = None
+) -> _Anchor | None:
     """The best-supported coarse window's position and lag, with the slope through the
     windows agreeing with it when they lie far enough apart; None without usable audio."""
     win = min(len(other), int(COARSE_WINDOW_S * rate))
@@ -958,8 +1133,11 @@ def _coarse(ref: np.ndarray, other: np.ndarray, rate: int) -> _Anchor | None:
     count = min(COARSE_WINDOWS, 1 + (len(other) - win) // max(win // 2, 1))
     mean_power = float(np.mean(np.square(other))) if len(other) else 0.0
     cands = []
-    for p in np.linspace(0, len(other) - win, count).astype(int):
+    starts = np.linspace(0, len(other) - win, count).astype(int)
+    for n, p in enumerate(starts, 1):
         seg = np.asarray(other[p : p + win], dtype=np.float32)
+        if tick is not None:
+            tick(n / len(starts))
         if not _energy_ok(seg, mean_power):
             continue
         k, v = _best_match(ref, seg, win, power)
@@ -1008,6 +1186,7 @@ def _fine(
     lag_at: Callable[[float], float],
     margin_at: Callable[[float], float],
     stretch: float = 1.0,
+    tick: Callable[[float], None] | None = None,
 ) -> list[_Match]:
     """Correlate the windows of ``rec`` starting at ``positions`` against excerpts of
     ``ref`` near the predicted lag. Windows are measured in parallel threads (reading,
@@ -1042,10 +1221,13 @@ def _fine(
         t_c = x0 + c / stretch
         return _Match(int(p), t_c / rate, (start + c - t_c) / rate, float(ncc[k]))
 
-    if len(positions) < 4:
-        found = [one(p) for p in positions]
-    else:
-        found = list(_pool().map(one, positions))
+    results = map(one, positions) if len(positions) < 4 else _pool().map(one, positions)
+    found = []
+    step = max(len(positions) // 20, 1)  # the share done, in about 20 steps
+    for k, m in enumerate(results, 1):
+        found.append(m)
+        if tick is not None and (k % step == 0 or k == len(positions)):
+            tick(k / len(positions))
     return [m for m in found if m is not None]
 
 

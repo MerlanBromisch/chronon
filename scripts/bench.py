@@ -68,6 +68,8 @@ def main() -> int:
     def progress(what: str, done: int, total: int) -> None:
         nonlocal last, current
         phase = what.split(" ")[0]
+        if phase not in ("writing", "verifying"):
+            phase = "analysing"  # reading files, the reference, analysing, placing clips
         if phase != current:
             now = time.perf_counter()
             if current:

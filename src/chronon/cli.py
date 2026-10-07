@@ -560,20 +560,54 @@ class _Progress:
     progress events (at most ten a second) with ``--json``.
 
     The time left is extrapolated from the rate of real work done so far (seconds of
-    audio analysed, samples written, files checked), not from a guess."""
+    audio analysed, samples written, files checked), not from a guess.
+
+    The analysis announces its own steps (``plan``: read, reference, one compare per device,
+    drift); with ``--json`` they go out as one ``plan`` event, followed by the command's other
+    steps (writing, verifying), and every progress event names its ``task``."""
+
+    KINDS = {"writing": "write", "verifying": "verify", "overview": "overview"}
 
     def __init__(self, steps: Sequence[str], out: _JsonOut | None = None):
         self.steps = list(steps)
         self.step = ""
+        self.task = ""
         self.started = 0.0
         self.sent = 0.0
         self.out = out
         self.tty = out is None and sys.stderr.isatty()
+        self.planned = False
 
-    def __call__(self, what: str, done: int, total: int) -> None:
+    def plan(self, tasks: list[dict]) -> None:
+        """The analysis's steps (``align.Step`` as dicts), before any of them runs."""
+        rows = [{"step": "analysing", **t} for t in tasks]
+        rows += [
+            {"step": s, "id": s, "kind": self.KINDS.get(s, s), "device": None}
+            for s in self.steps
+            if s != "analysing"
+        ]
+        self.planned = True
+        log.info(
+            "plan: %s",
+            ", ".join(r["id"] + (f" ({r['device']})" if r["device"] else "") for r in rows),
+        )
+        if self.out is not None:
+            self.out.emit("plan", steps=rows)
+
+    def __call__(
+        self,
+        what: str,
+        done: int,
+        total: int,
+        task: str | None = None,
+        task_done: float | None = None,
+        device: str | None = None,
+    ) -> None:
+        if not self.planned:
+            self.plan([])  # nothing to analyse (a saved analysis): the other steps only
         if not self.tty and self.out is None and not log.isEnabledFor(logging.INFO):
             return
-        step = what.split(" ")[0]
+        step = "analysing" if task is not None else what.split(" ")[0]
         now = time.monotonic()
         if step != self.step:
             if self.step and self.tty:
@@ -587,10 +621,12 @@ class _Progress:
         # no estimate before a little real work is done: it would be noise
         left = elapsed * (1 - frac) / frac if 0.03 <= frac < 1 and elapsed > 1.5 else None
         number = self.steps.index(step) + 1 if step in self.steps else 0
+        task = task or step
         if self.out is not None:
-            if frac < 1 and self.sent and now - self.sent < 0.1:
+            # at most ten a second, but never drop the first report of a task
+            if frac < 1 and self.sent and now - self.sent < 0.1 and task == self.task:
                 return
-            self.sent = now
+            self.sent, self.task = now, task
             self.out.emit(
                 "progress",
                 step=step,
@@ -599,6 +635,9 @@ class _Progress:
                 what=what,
                 done=frac,
                 left_s=left,
+                task=task,
+                task_done=frac if task_done is None else task_done,
+                device=device,
             )
             return
         prefix = f"[{number}/{len(self.steps)}] " if number else ""

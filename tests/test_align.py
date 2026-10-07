@@ -279,8 +279,62 @@ def test_progress_counts_reference_reading_and_only_moves_forward(tmp_path):
         [tmp_path / "zoom_01.wav", tmp_path / "cam_01.wav"],
         progress=lambda what, done, total: events.append((what, done, total)),
     )
-    reading = [e for e in events if "reading reference" in e[0]]
+    reading = [e for e in events if "reading the reference" in e[0]]
     assert reading and reading[-1][1] > 0  # decoding the reference is work done
     fractions = [done / total for _, done, total in events]
     assert fractions == sorted(fractions) and fractions[-1] == 1.0
     assert all(done <= total for _, done, total in events)
+
+
+def test_progress_follows_the_plan_step_by_step(tmp_path):
+    scenario = Scenario(
+        signal="speech",
+        seed=4,
+        devices=(
+            Device("desk", (Clip(0.0, 60.0),)),
+            Device("zoom", (Clip(5.0, 25.0), Clip(32.0, 20.0)), drift_ppm=-8.0),
+            Device("cam", (Clip(10.0, 30.0),), drift_ppm=12.0),
+        ),
+    )
+    synth.write(scenario, tmp_path)
+
+    class Progress:
+        def __init__(self):
+            self.steps, self.events = [], []
+
+        def plan(self, steps):
+            self.steps = steps
+
+        def __call__(self, what, done, total, task, task_done, device):
+            self.events.append((done / total, task, task_done, device))
+
+    progress = Progress()
+    files = ["zoom_01.wav", "zoom_02.wav", "cam_01.wav"]
+    align.align_files([tmp_path / "desk_01.wav"], [tmp_path / f for f in files], progress=progress)
+    ids = [s["id"] for s in progress.steps]
+    assert ids == ["read", "reference", "compare:1", "compare:2", "drift"]
+    assert [s["device"] for s in progress.steps] == [None, "desk", "zoom", "cam", None]
+    assert [s["kind"] for s in progress.steps] == [
+        "read",
+        "reference",
+        "compare",
+        "compare",
+        "drift",
+    ]
+
+    # the steps run in the plan's order, each from its start to its end
+    tasks = [task for _, task, _, _ in progress.events]
+    assert list(dict.fromkeys(tasks)) == ids
+    assert all(0.0 <= share <= 1.0 for _, _, share, _ in progress.events)
+    for step in ids:
+        shares = [share for _, task, share, _ in progress.events if task == step]
+        assert shares == sorted(shares) and shares[-1] == 1.0, step
+    devices = {task: device for _, task, _, device in progress.events}
+    assert devices["compare:1"] == "zoom" and devices["compare:2"] == "cam"
+
+    # the whole moves forward in real work, without big jumps once the files' lengths are
+    # known (until then it stays at 0; reading tiny files is half the work here)
+    whole = [f for f, *_ in progress.events]
+    assert whole == sorted(whole) and whole[-1] == 1.0
+    after = [f for f, task, *_ in progress.events if task != "read"]
+    assert max(b - a for a, b in zip(after, after[1:], strict=False)) < 0.2

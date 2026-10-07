@@ -39,10 +39,22 @@ def test_analyze_json(tmp_path, capsys):
     rec, cam = _scene(tmp_path)
     assert main(["analyze", "--json", str(rec), str(cam)]) == 0
     events = _events(capsys)
-    assert {e["event"] for e in events[:-1]} == {"progress"}
-    progress = [e["done"] for e in events[:-1]]
+    plan = events[0]
+    assert plan["event"] == "plan"
+    assert [s["id"] for s in plan["steps"]] == ["read", "reference", "compare:1", "drift"]
+    assert plan["steps"][2] == {
+        "step": "analysing",
+        "id": "compare:1",
+        "kind": "compare",
+        "device": "cam",
+    }
+    assert {e["event"] for e in events[1:-1]} == {"progress"}
+    progress = [e["done"] for e in events[1:-1]]
     assert progress == sorted(progress) and progress[-1] == 1.0
-    assert all(e["step"] == "analysing" and e["steps"] == 1 for e in events[:-1])
+    assert all(e["step"] == "analysing" and e["steps"] == 1 for e in events[1:-1])
+    tasks = [e["task"] for e in events[1:-1]]
+    assert list(dict.fromkeys(tasks)) == ["read", "reference", "compare:1", "drift"]
+    assert {e["device"] for e in events[1:-1] if e["task"] == "compare:1"} == {"cam"}
 
     result = events[-1]
     assert result["event"] == "result" and result["command"] == "analyze"
@@ -76,6 +88,11 @@ def test_correct_json_steps(tmp_path, capsys):
     events = _events(capsys)
     steps = [e["step"] for e in events if e["event"] == "progress"]
     assert list(dict.fromkeys(steps)) == ["analysing", "writing", "verifying"]
+    (plan,) = [e for e in events if e["event"] == "plan"]
+    assert [s["id"] for s in plan["steps"]][-2:] == ["writing", "verifying"]
+    assert [s["kind"] for s in plan["steps"]][-2:] == ["write", "verify"]
+    tasks = [e["task"] for e in events if e["event"] == "progress"]
+    assert list(dict.fromkeys(tasks))[-2:] == ["writing", "verifying"]
     result = events[-1]
     assert result["command"] == "correct" and result["failed"] == 0
     assert [r["verified"] for r in result["files"]] == [None, True]

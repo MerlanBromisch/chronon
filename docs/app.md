@@ -62,10 +62,25 @@ when a field changes meaning or goes away; new fields may appear any time) and `
 ```
 Version 2 (2026-10-07): `notes` are objects with a code, errors carry a code (below).
 Version 1 had English sentences in both.
+- `plan` (first, once): the step list of board 06. `steps` = objects with `step` (the
+  command's step it belongs to), `id`, `kind` and `device` (or null). The analysis brings
+  `read` (kind `read`: lengths and levels of the files), `reference` (kind `reference`, the
+  reference device: its waveform for the coarse search), one `compare:<k>` per device (kind
+  `compare`, in the user's device order) and `drift` (kind `drift`: placing clips through
+  others, borrowed drift); `correct` adds `writing` / `verifying`, `overview` its `overview`.
+  Without an analysis (`--analysis`) only the command's other steps are listed.
 - `progress`: `step` is one of the command's steps (`analysing`; `correct`: `analysing`,
-  `writing`, `verifying`), `what` the detail (e.g. `analysing ZOOM0003.WAV`), `done` 0…1 within
-  the step, `left_s` the time left in the step or `null` while it cannot be estimated yet (before 3 % is done). Measured
-  in real work (seconds analysed, samples written, files checked), at most ten events a second.
+  `writing`, `verifying`), `what` the detail (e.g. `analysing ZOOM0003.WAV`, English), `done`
+  0…1 within the step, `left_s` the time left in the step or `null` while it cannot be
+  estimated yet (before 3 % is done). `task` is the plan step running now, `task_done` 0…1
+  within it, `device` its device or null. Steps run in the plan's order; a step is done when
+  the next one starts. Measured in real work (seconds analysed, samples written, files
+  checked): the files' decoding counts (the next clip decodes in the background while one is
+  analysed; its work is credited to its own step, which can start at more than 0), the coarse
+  search and the measurement count window by window. `done` stays 0 until the files' lengths
+  are read, and never goes back: work nobody foresaw (a further reference track, a clip
+  linked through another) makes it hold still. At most ten events a second, but the first
+  event of each task always goes out.
 - `result` (exactly one, last, on success): `files` are the same rows as the report file —
   `analyze`: offset, drift, confidence, `reliable`, windows, `via` / `drift_from` /
   `linked_via`, `notes`, and `placement` (where the file lands on a timeline of the originals:
