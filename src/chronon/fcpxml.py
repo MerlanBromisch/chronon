@@ -283,9 +283,8 @@ def probe(path: Path | str) -> Media:
     if video:
         num, den = (int(x) for x in video.get("r_frame_rate", "25/1").split("/"))
         frame = Fraction(den, num)
-        tc = _timecode_tag(streams, fmt_tags)
-        if tc:
-            start = _timecode(tc, frame)
+        if info.timecode:
+            start = audio.timecode_time(info.timecode, frame)
         nb = int(video.get("nb_frames") or 0)
         stream_duration = _stream_duration(video) or Fraction(info.frames, info.sample_rate)
         avg = video.get("avg_frame_rate", "0/0")
@@ -323,16 +322,6 @@ def _stream_duration(stream: dict) -> Fraction | None:
     return None
 
 
-def _timecode_tag(streams: list[dict], fmt_tags: dict) -> str | None:
-    """The timecode Final Cut reads: from a standard ``tmcd`` track only."""
-    for s in streams:
-        if s.get("codec_tag_string") == "tmcd" and s.get("tags", {}).get("timecode"):
-            return s["tags"]["timecode"]
-    if any(s.get("codec_tag_string") == "tmcd" for s in streams):
-        return fmt_tags.get("timecode")
-    return None
-
-
 def format_name(frame: Fraction, width: int, height: int) -> str:
     """Final Cut's name for a video format, e.g. FFVideoFormat1080p25,
     FFVideoFormat3840x2160p25, FFVideoFormat1080p2997."""
@@ -340,12 +329,6 @@ def format_name(frame: Fraction, width: int, height: int) -> str:
     fps = str(int(rate)) if rate.denominator == 1 else f"{float(rate):.2f}".replace(".", "")
     size = f"{height}" if (width, height) in ((1920, 1080), (1280, 720)) else f"{width}x{height}"
     return f"FFVideoFormat{size}p{fps}"
-
-
-def _timecode(tc: str, frame: Fraction) -> Fraction:
-    h, m, s, f = (int(x) for x in re.split(r"[:;.]", tc))
-    fps = round(1 / frame)
-    return ((h * 3600 + m * 60 + s) * fps + f) * frame
 
 
 # --- formatting ------------------------------------------------------------

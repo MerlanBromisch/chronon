@@ -57,7 +57,7 @@ events today have `step` = `analysing` and a free-text `what`. Needed:
   cache folder is set in settings. A 4 h desk track takes seconds to scan, a video file much
   longer, so the overview must be computed once and kept.
 
-### 1.7 Smaller items
+### 1.7 Smaller items (done: `Info.start` / `devices --json` `files`, `--log FILE`)
 - **Start column in step 1:** BWF time stamps are in `audio.Info`, but MP4 `tmcd` timecode is
   only parsed in `fcpxml.py`. Move it to `probe`, so the file list can show every start time.
 - **Protocol:** the core logs nothing. Write a `logging` file per run (the worker's stderr plus

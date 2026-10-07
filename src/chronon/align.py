@@ -29,7 +29,9 @@ correlate matters little (crosstalk at |ncc| 0.05 can still be accurate).
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -41,6 +43,8 @@ import soxr
 from scipy import fft as sp_fft
 
 from chronon import audio, devices
+
+log = logging.getLogger(__name__)
 
 ANALYSIS_RATE = 16_000
 COARSE_RATE = 2_000
@@ -422,11 +426,20 @@ def align_files(
             def stage(frac: float, base: float = done, length: float = duration, n: str = name):
                 tell(f"analysing {n}", base + frac * length)
 
+            began = time.monotonic()
             try:
                 index, a, lead = _align_clip(refs, clip.tracks, rec, rate, stage)
             except ValueError as e:
                 errors[clip.tracks[0]] = str(e)
+                log.warning("%s: no direct match with the reference (%s)", name, e)
             else:
+                log.info(
+                    "%s: measured in %.1f s against %s via %s",
+                    name,
+                    time.monotonic() - began,
+                    ref_tracks[index].name,
+                    lead.name,
+                )
                 via = lead if len(clip.tracks) > 1 else None
                 for t in clip.tracks:
                     out[t] = FileResult(ref_tracks[index], a, dev.name, via=via)
@@ -440,7 +453,32 @@ def align_files(
         _borrow_drift(dev, out)
     tell("analysing", done)
     report("analysing", 1, 1)
+    for p in paths:
+        _log_result(Path(p), out[Path(p)])
     return [out[Path(p)] for p in paths]
+
+
+def _log_result(path: Path, r: FileResult) -> None:
+    a = r.alignment
+    how = [
+        f"{k} {v.name}"
+        for k, v in (("via", r.via), ("drift from", r.drift_from), ("linked via", r.linked_via))
+        if v is not None
+    ]
+    log.info(
+        "%s (%s): offset %.6f s, drift %+.3f ppm, confidence %.2f (%d/%d windows), "
+        "wander %.2f ms, %s%s",
+        path.name,
+        r.device,
+        a.offset_s,
+        a.drift_ppm,
+        a.confidence,
+        a.windows_used,
+        a.windows_total,
+        a.wander_ms,
+        "reliable" if a.reliable or r.is_reference else "NOT RELIABLE",
+        "".join(f", {h}" for h in how),
+    )
 
 
 def _from_layout(layout: devices.Layout) -> list[devices.Device]:

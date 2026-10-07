@@ -18,6 +18,7 @@ anything but zero offset and zero drift fails the export.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import threading
@@ -34,6 +35,8 @@ import soxr
 
 from chronon import __version__, align, analysis, audio, devices, fcpxml, messages
 from chronon.messages import note
+
+log = logging.getLogger(__name__)
 
 WAV_MAX_BYTES = 2**32 - 2**20  # RIFF sizes are 32-bit; leave room for the header and chunks
 CAF_ABOVE_BYTES = 2**31  # WAV/AIFF: 4 GiB hard limit, some programs already fail at 2 GiB
@@ -564,6 +567,8 @@ def write_all(outputs: Sequence[Output], progress: Progress | None = None) -> No
 
         write(outputs[k], step)
 
+    for o in outputs:
+        log.info("writing %s (%d frames at %d Hz, %s)", o.path, o.frames, o.out_rate, o.format)
     with ThreadPoolExecutor(max_workers=WRITE_THREADS, thread_name_prefix="chronon-write") as ex:
         list(ex.map(one, range(len(outputs))))  # re-raises the first error
     report("writing", total, total)
@@ -595,6 +600,7 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
         except ValueError as e:
             out.verified = False
             out.notes.append(note("not_verifiable", reason=str(e)))
+            log.warning("cannot verify %s: %s", Path(out.path).name, e)
             continue
         # the error in the middle of the measured part, not extrapolated into padding
         mid = (min(a.good_s) + max(a.good_s)) / 2 if a.good_s else 0.0
@@ -603,6 +609,13 @@ def verify(outputs: Sequence[Output], progress: Progress | None = None) -> None:
         out.verify_drift_ppm = a.drift_ppm
         out.verified = (
             abs(error) <= VERIFY_OFFSET_TOL_S and abs(a.drift_ppm) <= VERIFY_DRIFT_TOL_PPM
+        )
+        log.info(
+            "verified %s: %+.3f ms, %+.3f ppm, %s",
+            Path(out.path).name,
+            out.verify_offset_ms,
+            out.verify_drift_ppm,
+            "ok" if out.verified else "FAILED",
         )
         if not out.verified:
             out.notes.append(note("verification_failed"))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import struct
 import subprocess
@@ -10,6 +11,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from fractions import Fraction
 from math import gcd
 from pathlib import Path
 
@@ -41,10 +43,22 @@ class Info:
     codec: str = ""
     time_reference: int | None = None  # BWF time stamp (samples since midnight)
     recorder: str = ""  # whatever names the device: BWF encoder, MP4 brand / encoder tag
+    timecode: str | None = None  # video timecode as Final Cut reads it (``tmcd`` track only)
+    frame: Fraction | None = None  # video frame duration
 
     @property
     def duration_s(self) -> float:
         return self.frames / self.sample_rate
+
+    @property
+    def start(self) -> Fraction | None:
+        """The media's own time origin, as editors read it: the video's timecode, or the BWF
+        time stamp of an audio file (seconds since midnight); None without either."""
+        if self.timecode and self.frame:
+            return timecode_time(self.timecode, self.frame)
+        if self.time_reference is not None and not self.has_video:
+            return Fraction(self.time_reference, self.sample_rate)
+        return None
 
 
 def probe(path: Path | str) -> Info:
@@ -82,10 +96,18 @@ def probe(path: Path | str) -> Info:
     else:
         duration = float(a.get("duration") or data.get("format", {}).get("duration") or 0)
         frames = round(duration * rate)
-    has_video = any(
-        s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")
-        for s in streams
+    video = next(
+        (
+            s
+            for s in streams
+            if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")
+        ),
+        None,
     )
+    frame = None
+    if video is not None:
+        num, den = (int(x) for x in video.get("r_frame_rate", "25/1").split("/"))
+        frame = Fraction(den, num) if num else None
     tags = {k.lower(): v for k, v in data.get("format", {}).get("tags", {}).items()}
     ref = tags.get("time_reference")
     recorder = " ".join(
@@ -96,11 +118,31 @@ def probe(path: Path | str) -> Info:
         int(a["channels"]),
         bits,
         frames,
-        has_video,
+        video is not None,
         codec=str(a.get("codec_name", "")),
         time_reference=int(ref) if ref and str(ref).isdigit() else None,
         recorder=recorder,
+        timecode=timecode_tag(streams, data.get("format", {}).get("tags", {})) if video else None,
+        frame=frame,
     )
+
+
+def timecode_tag(streams: list[dict], fmt_tags: dict) -> str | None:
+    """The timecode Final Cut reads: from a standard ``tmcd`` track only. (Sony XAVC S keeps
+    its timecode in a ``rtmd`` metadata track, which Final Cut ignores for a bare MP4.)"""
+    for s in streams:
+        if s.get("codec_tag_string") == "tmcd" and s.get("tags", {}).get("timecode"):
+            return s["tags"]["timecode"]
+    if any(s.get("codec_tag_string") == "tmcd" for s in streams):
+        return fmt_tags.get("timecode")
+    return None
+
+
+def timecode_time(tc: str, frame: Fraction) -> Fraction:
+    """Seconds of a timecode ``HH:MM:SS:FF`` (frames counted at the nominal rate)."""
+    h, m, s, f = (int(x) for x in re.split(r"[:;.]", tc))
+    fps = round(1 / frame)
+    return ((h * 3600 + m * 60 + s) * fps + f) * frame
 
 
 def stream(path: Path | str, channels: int, block_frames: int = 1 << 16) -> Iterator[np.ndarray]:
@@ -138,6 +180,15 @@ def stream(path: Path | str, channels: int, block_frames: int = 1 << 16) -> Iter
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def ffmpeg_version() -> str:
+    """First line of ``ffmpeg -version``, for protocols."""
+    try:
+        result = subprocess.run([_tool("ffmpeg"), "-version"], capture_output=True, text=True)
+    except (AudioError, OSError) as e:
+        return str(e)
+    return result.stdout.splitlines()[0] if result.stdout else "unknown"
 
 
 def _tool(name: str) -> str:

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +28,7 @@ OVERVIEW_VERSION = 1  # part of the cache key: bump when the overview's content 
 BLOCK_FRAMES = 1 << 16
 
 Progress = Callable[[str, int, int], None]
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -135,7 +138,9 @@ def overview(
             return np.load(cached)
         except (OSError, ValueError):
             pass  # a damaged cache file is computed again
+    began = time.monotonic()
     peaks = _peaks(Path(path), progress)
+    log.info("overview of %s: %d peaks in %.1f s", path, len(peaks), time.monotonic() - began)
     cached.parent.mkdir(parents=True, exist_ok=True)
     tmp = cached.with_name(cached.name + f".{os.getpid()}.tmp")
     with open(tmp, "wb") as f:

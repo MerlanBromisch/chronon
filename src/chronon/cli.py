@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import logging
+import platform
 import sys
 import time
 import traceback
@@ -24,6 +26,8 @@ from chronon import (
     synth,
 )
 from chronon.messages import note
+
+log = logging.getLogger("chronon.cli")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -51,6 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "then 'analyze --devices FILE'",
     )
     p.add_argument("--json", action="store_true", help="machine-readable output (docs/app.md)")
+    _log_arg(p)
 
     p = commands.add_parser("analyze", help="measure offset and drift of files against a reference")
     _ref_args(p, export=False)
@@ -121,6 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("files", nargs="+", help="recordings")
     p.add_argument("--cache", required=True, metavar="DIR", help="cache folder for the overviews")
     p.add_argument("--json", action="store_true", help="machine-readable output (docs/app.md)")
+    _log_arg(p)
 
     p = commands.add_parser("eval", help="run analyze on a 'chronon synth' folder and compare")
     p.add_argument("scene", help="folder written by 'chronon synth'")
@@ -131,6 +137,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if stream is not None and hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
     out = _JsonOut() if getattr(args, "json", False) else None
+    handler = _start_log(args.log, argv) if getattr(args, "log", None) else None
+    try:
+        return _run(parser, args, out)
+    finally:
+        if handler is not None:
+            logging.getLogger("chronon").removeHandler(handler)
+            handler.close()
+
+
+def _run(parser: argparse.ArgumentParser, args: argparse.Namespace, out: _JsonOut | None) -> int:
     try:
         if args.command == "synth":
             return _synth(args)
@@ -150,17 +166,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "eval":
             return _eval(args)
     except (audio.AudioError, ValueError) as e:
+        log.error("%s", e, exc_info=True)
         if out is not None:
             out.error(e)
             return 1
         parser.exit(1, f"chronon: error: {e}\n")
     except Exception as e:
+        log.exception("unexpected error")
         if out is None:
             raise
         traceback.print_exc()
         out.emit("error", code=None, message=f"{type(e).__name__}: {e}")
         return 1
     return 2
+
+
+def _log_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--log",
+        metavar="FILE",
+        help="write a protocol of the run to FILE (what was measured, written, verified, errors)",
+    )
+
+
+def _start_log(path: str, argv: Sequence[str] | None) -> logging.Handler:
+    """A protocol of this run: the core's messages and any traceback, with the versions
+    and the command that produced it."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(path, mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+    root = logging.getLogger("chronon")
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    log.info(
+        "chronon %s, Python %s, %s", __version__, platform.python_version(), platform.platform()
+    )
+    log.info("command: chronon %s", " ".join(sys.argv[1:] if argv is None else argv))
+    log.info("ffmpeg: %s", audio.ffmpeg_version())
+    return handler
 
 
 def _ref_args(p: argparse.ArgumentParser, export: bool = True) -> None:
@@ -185,6 +228,7 @@ def _ref_args(p: argparse.ArgumentParser, export: bool = True) -> None:
         help="machine-readable output for apps and scripts: one JSON object per line on "
         "stdout (progress, result, error), see docs/app.md",
     )
+    _log_arg(p)
     if export:
         p.add_argument(
             "--fps",
@@ -248,6 +292,7 @@ def _devices(args: argparse.Namespace, out: _JsonOut | None) -> int:
             command="devices",
             layout=layout.to_dict(),
             devices=rows,
+            files=[_file_row(f, probe(f)) for f in layout.files],
             saved=None if saved is None else str(saved),
         )
         return 0
@@ -263,6 +308,22 @@ def _devices(args: argparse.Namespace, out: _JsonOut | None) -> int:
     if saved is not None:
         print(f"devices: {saved}")
     return 0
+
+
+def _file_row(path: Path, info: audio.Info) -> dict:
+    """What the file list shows: length, format and the media's own start time."""
+    start = info.start
+    return {
+        "file": str(path),
+        "duration_s": info.duration_s,
+        "sample_rate": info.sample_rate,
+        "channels": info.channels,
+        "has_video": info.has_video,
+        "codec": info.codec,
+        "start_s": None if start is None else float(start),
+        "timecode": info.timecode,
+        "frame_rate": None if info.frame is None else str(1 / info.frame),
+    }
 
 
 def _device_row(d: devices.Device, infos: dict[Path, audio.Info]) -> dict:
@@ -510,13 +571,16 @@ class _Progress:
         self.tty = out is None and sys.stderr.isatty()
 
     def __call__(self, what: str, done: int, total: int) -> None:
-        if not self.tty and self.out is None:
+        if not self.tty and self.out is None and not log.isEnabledFor(logging.INFO):
             return
         step = what.split(" ")[0]
         now = time.monotonic()
         if step != self.step:
             if self.step and self.tty:
                 print(file=sys.stderr)
+            if self.step:
+                log.info("%s done in %.1f s", self.step, now - self.started)
+            log.info("%s", step)
             self.step, self.started, self.sent = step, now, 0.0
         elapsed = now - self.started
         frac = done / total if total else 1.0
@@ -544,6 +608,8 @@ class _Progress:
         print(f"\r{line:<78}", end="", file=sys.stderr, flush=True)
 
     def finish(self) -> None:
+        if self.step:
+            log.info("%s done in %.1f s", self.step, time.monotonic() - self.started)
         if self.tty and self.step:
             print(file=sys.stderr)
 
