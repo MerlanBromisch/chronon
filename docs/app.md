@@ -77,8 +77,11 @@ Version 1 had English sentences in both.
   editable device layout: `devices` in timeline order with `name`, `description`, `clips`
   (lists of parallel tracks), `track_names`; `reference`, `reference_tracks`, `suggested`) and
   `devices` (per device `kind` = tracks / clips / video_clips / file / video, `clips`,
-  `tracks`, `files`, `sample_rate`, `channels`, `duration_s`, `has_video`). The app edits the
-  layout, saves it and runs `analyze --devices FILE`. A layout is refused when a file is in two
+  `tracks`, `files`, `sample_rate`, `channels`, `duration_s`, `has_video`) and `files` (the
+  file list of step 1, per file `file`, `duration_s`, `sample_rate`, `channels`, `has_video`,
+  `codec`, `start_s` = the media's own start as editors read it: video timecode from a `tmcd`
+  track, else the BWF time stamp, else null; `timecode` as written, `frame_rate`). The app edits
+  the layout, saves it and runs `analyze --devices FILE`. A layout is refused when a file is in two
   devices, two names collide (ignoring case), a name cannot be a file name, or the reference
   tracks are not parallel tracks of the reference device.
 - **Analyse once, export later:** `analyze --save A.json` keeps the analysis;
@@ -110,6 +113,10 @@ Version 1 had English sentences in both.
   | `verification_failed` | | output is not in sync with the reference |
   | `verification_failed_via` | `file` | its parallel track `file` failed verification |
   | `text` | `text` | a note of a report written before codes (schema < 2) |
+- **Protocol:** `--log FILE` on devices / analyze / sync / correct / overview writes a
+  protocol of the run (versions, ffmpeg, command, per file what was measured, written and
+  verified, step durations, errors with traceback), a new file per run; for "Protokoll öffnen".
+  The worker's stderr holds only tracebacks of unexpected errors, which the protocol has too.
 - `error`: the run stopped (exit code 1); `message` is English text. `code` is set for errors
   the user can fix, with its fields next to it; `null` otherwise (show `message`).
 

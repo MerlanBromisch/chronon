@@ -140,3 +140,19 @@ def test_timeline_reads_old_unversioned_reports(tmp_path, capsys):
     report.write_text(json.dumps({"schema": correct.REPORT_SCHEMA + 1, "files": []}))
     with pytest.raises(correct.CorrectError, match="newer"):
         correct.read_report(report)
+
+
+def test_log_file_holds_the_run(tmp_path, capsys):
+    rec, cam = _scene(tmp_path)
+    log = tmp_path / "logs" / "run.log"
+    assert main(["analyze", "--json", "--log", str(log), str(rec), str(cam)]) == 0
+    text = log.read_text(encoding="utf-8")
+    assert "chronon " in text and "ffmpeg" in text and "command: chronon analyze" in text
+    assert f"{cam.name} (" in text and "drift +40." in text and "analysing done" in text
+    capsys.readouterr()
+
+    missing = tmp_path / "missing.wav"
+    assert main(["analyze", "--json", "--log", str(log), str(rec), str(missing)]) == 1
+    text = log.read_text(encoding="utf-8")  # a new protocol per run
+    assert "command: chronon analyze" in text and f"{cam.name} (" not in text
+    assert "ERROR" in text and "missing.wav" in text and "Traceback" in text

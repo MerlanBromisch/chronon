@@ -1,12 +1,16 @@
+import json
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 from fractions import Fraction
 from pathlib import Path
 
+import numpy as np
 import pytest
+import soundfile as sf
 
-from chronon import correct, fcpxml, synth
+from chronon import audio, correct, fcpxml, synth
+from chronon.cli import main
 from chronon.fcpxml import Item, Media
 from chronon.synth import Clip, Device, Scenario
 
@@ -167,12 +171,12 @@ def test_only_a_standard_timecode_track_counts():
         {"codec_tag_string": "avc1"},
         {"codec_tag_string": "rtmd", "tags": {"timecode": "14:49:07:04"}},
     ]
-    assert fcpxml._timecode_tag(sony, {}) is None
+    assert audio.timecode_tag(sony, {}) is None
     other = [
         {"codec_tag_string": "hvc1"},
         {"codec_tag_string": "tmcd", "tags": {"timecode": "07:39:37:10"}},
     ]
-    assert fcpxml._timecode_tag(other, {"timecode": "07:39:37:10"}) == "07:39:37:10"
+    assert audio.timecode_tag(other, {"timecode": "07:39:37:10"}) == "07:39:37:10"
 
 
 def test_corrected_audio_is_named_apart_from_its_video(tmp_path):
@@ -263,3 +267,26 @@ def test_variable_frame_rate_video_keeps_its_real_length(tmp_path):
     assert float(vfr.duration) == pytest.approx(20.0, abs=0.15)  # not 450 frames x 1/30 s
     assert float(cfr.duration) == pytest.approx(20.0, abs=0.05)
     assert vfr.frame == Fraction(1, 30) and vfr.duration % vfr.frame == 0
+
+
+def test_probe_reads_the_start_time_editors_read(tmp_path, capsys):
+    rec, video = _scene(tmp_path)
+    info = audio.probe(video)
+    assert info.timecode == "01:00:00:00" and info.frame == Fraction(1, 25)
+    assert info.start == 3600
+    assert audio.probe(rec).start is None  # no time stamp
+
+    stamped = tmp_path / "stamped.wav"
+    with sf.SoundFile(stamped, "w", 48_000, 1, "PCM_24", format="WAV") as f:
+        audio.set_bwf(f, 2 * 3600 * 48_000, 48_000)
+        f.write(np.zeros(4800, dtype=np.float32))
+    assert audio.probe(stamped).start == 7200
+
+    assert main(["devices", "--json", str(rec), str(video), str(stamped)]) == 0
+    result = json.loads(capsys.readouterr().out.splitlines()[-1])
+    rows = {Path(r["file"]).name: r for r in result["files"]}
+    assert rows["cam.mov"]["start_s"] == 3600 and rows["cam.mov"]["timecode"] == "01:00:00:00"
+    assert rows["cam.mov"]["frame_rate"] == "25" and rows["cam.mov"]["has_video"]
+    assert rows["stamped.wav"]["start_s"] == 7200 and rows["stamped.wav"]["timecode"] is None
+    assert rows["rec_01.wav"]["start_s"] is None
+    assert rows["rec_01.wav"]["duration_s"] == pytest.approx(30.0)

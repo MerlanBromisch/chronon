@@ -19,6 +19,8 @@ this file when it is out of date.
   - Listening: `audio.excerpt`, `listen.Timeline` (reference time ↔ file time, clips of a
     device), cached overviews (`listen.overview`, `chronon overview --cache DIR`); see
     `docs/app.md` "Listening and waveforms".
+  - `devices --json` lists every file with its start (`tmcd` timecode or BWF, `audio.Info.start`);
+    `--log FILE` writes a protocol per run.
   - Progress is weighted by real work (reference decoding counts, decoded files weigh 1.7×).
   - Export: `<device>[_<track>|_<file>]_korrigiert.<wav|caf>`, bit depth ≥ 24, `--timeline
     fcpxml|none`, `--fps`, FCPXML lanes in the user's device order.
@@ -34,11 +36,9 @@ this file when it is out of date.
   Decisions with reasons: `docs/design/gaps.md` ("Decided 2026-10-07").
 
 ## Next steps (in order)
-1. **Smaller** (gaps.md 1.7): MP4 `tmcd` timecode into `audio.probe` (only `fcpxml.py` parses it
-   now) for the start column; a log file per run for "Protokoll öffnen".
-2. **Build the app** from `spike/packaging` (rebase onto `main`), screen by screen following the
+1. **Build the app** from `spike/packaging` (rebase onto `main`), screen by screen following the
    boards: Dateien → Geräte & Referenz → Sync → Ergebnis → Hören → Export, plus settings.
-3. Later, only with a reason: progress has one 6–7 s gap while the first video decodes in the
+2. Later, only with a reason: progress has one 6–7 s gap while the first video decodes in the
    background; issues #5, #7, #8, #11, #15.
 
 ## How the user works
