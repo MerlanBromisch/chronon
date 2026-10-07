@@ -242,12 +242,19 @@ Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python 
 - `files_page.py` + `project.py`: step 1. Files and folders (searched with subfolders for audio
   and video), read in the GUI process on a few threads (`audio.probe`, one ffprobe each), so the
   list shows "23 / 56" while it reads. Unreadable files ask one by one (board 04).
+- `devices_page.py`: step 2 without the audition (boards 05–05c). `devices.detect` runs on a
+  thread with the infos of step 1 (it only reads levels for the suggestion); the page edits the
+  project's `devices.Layout` through its methods (`move_device`, `move_files`, `merge`), which
+  keep the reference and the suggestion on their devices. Rename (name + description) in
+  place, reorder by the grip or the row menu, regroup clips (multitrack devices are disabled
+  targets), reference device by its radio, reference tracks as chips (double click names one).
+  Device names are checked as `Layout.check` does (file names, unique ignoring case).
 - `jobs.py`: a `Job` runs `chronon <command> --json` in a child process (`QProcess`) and turns
   its events into signals; cancel = kill. The frozen app runs itself with `--worker <command>`.
 - `app.py --selftest FOLDER`: reads a folder in the window and analyses it in a worker, without
   a screen; the app build (`.github/workflows/app.yml`) runs it on all three platforms.
 - Tests: `tests/test_gui.py` (offscreen Qt; CI installs the `gui` extra).
-- Not yet: steps 2–6 and settings (placeholders), IBM Plex (not bundled; falls back to the
+- Not yet: the audition of step 2, steps 3–6 and settings (placeholders), IBM Plex (not bundled; falls back to the
   system's sans and mono fonts).
 
 ## Later

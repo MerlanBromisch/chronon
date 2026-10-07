@@ -29,8 +29,8 @@ this file when it is out of date.
 - **CI** runs the full suite on Ubuntu, macOS and Windows (LGPL ffmpeg on Windows: no libx264,
   test videos use `mpeg4`). Windows has already caught two path bugs; expect more.
 - **Desktop app** (`src/chronon/gui/`, see `docs/app.md` "The app in the repo"): window, theme,
-  jobs (`chronon … --json` in a child process) and step 1 "Dateien" are built; steps 2–6 and
-  settings are placeholders. Packaging from the spike (PyInstaller, bundled ffmpeg, headless
+  jobs (`chronon … --json` in a child process), step 1 "Dateien" and step 2 "Geräte & Referenz"
+  without its audition are built; steps 3–6 and settings are placeholders. Packaging from the spike (PyInstaller, bundled ffmpeg, headless
   self test in `.github/workflows/app.yml`, runs on pull requests touching the app).
 - **Design**: finished. Boards in `docs/design/ui/png/{dark,light}`, spec in `docs/design/ui/README.md`
   (read its "Corrections to the boards" section: the timeline row is a format choice, multitrack
@@ -38,9 +38,9 @@ this file when it is out of date.
   Decisions with reasons: `docs/design/gaps.md` ("Decided 2026-10-07").
 
 ## Next steps (in order)
-1. **Build the app**, screen by screen following the boards, one PR each: Geräte & Referenz
-   (`chronon devices --json`, the layout, audition with `listen`) → Sync (`analyze --devices
-   --save`, the plan / task progress) → Ergebnis → Hören → Export, plus settings. Step 1 is done.
+1. **Build the app**, screen by screen following the boards, one PR each: the audition of step 2
+   (`listen.overview` in a job, `audio.excerpt` played with QtMultimedia) → Sync (`analyze
+   --devices --save`, the plan / task progress) → Ergebnis → Hören → Export, plus settings.
 2. Later, only with a reason: issues #5, #7, #8, #11, #15.
 
 ## How the user works

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-from chronon import audio
+from chronon import align, audio, devices
 
 # What a folder contributes: audio and video, no sidecar files (XML, THM, LRF, JSON ...)
 MEDIA = {
@@ -48,6 +48,8 @@ class Entry:
 @dataclass
 class Project:
     entries: list[Entry] = field(default_factory=list)
+    layout: devices.Layout | None = None  # step 2: the devices as the user arranged them
+    suggested_tracks: list[Path] = field(default_factory=list)  # Chronon's reference tracks
 
     def add(self, paths: list[Path]) -> list[Entry]:
         known = {e.path for e in self.entries}
@@ -61,6 +63,40 @@ class Project:
     @property
     def readable(self) -> list[Entry]:
         return [e for e in self.entries if e.info is not None]
+
+    @property
+    def infos(self) -> dict[Path, audio.Info]:
+        """The files that take part, with their metadata."""
+        return {e.path: e.info for e in self.entries if e.info is not None}
+
+    @property
+    def layout_current(self) -> bool:
+        """Whether the devices still hold exactly the files of step 1."""
+        return self.layout is not None and set(self.layout.files) == set(self.infos)
+
+
+class Detector(QObject):
+    """Groups the files into devices and suggests a reference (``devices.detect``) on a
+    thread: reading the levels of a desk's tracks takes a moment."""
+
+    finished = Signal(object)  # devices.Layout, or an Exception
+
+    def __init__(self, infos: dict[Path, audio.Info], parent: QObject | None = None):
+        super().__init__(parent)
+        self.infos = infos
+
+    def start(self) -> None:
+        QThreadPool.globalInstance().start(self._run)
+
+    def _run(self) -> None:
+        try:
+            layout = devices.detect(
+                list(self.infos), probe=self.infos.__getitem__, loudest=align.loudest
+            )
+        except Exception as e:  # shown on the page; the window must not die
+            self.finished.emit(e)
+        else:
+            self.finished.emit(layout)
 
 
 class Reader(QObject):

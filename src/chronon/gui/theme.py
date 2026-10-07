@@ -106,6 +106,14 @@ def palette(t: dict[str, str]) -> QPalette:
     return p
 
 
+def _mix(a: str, b: str, share: float) -> str:
+    """Colour ``a`` laid over ``b`` at ``share`` opacity (badge and row fills)."""
+    ca, cb = QColor(a), QColor(b)
+    pairs = zip(ca.getRgb()[:3], cb.getRgb()[:3], strict=True)
+    mixed = [round(x * share + y * (1 - share)) for x, y in pairs]
+    return QColor(*mixed).name()
+
+
 def stylesheet(t: dict[str, str]) -> str:
     """Widgets are styled by object name (``#sidebar``) and the ``role`` property."""
     ui = _family(UI_FONTS)
@@ -188,4 +196,31 @@ QDialog {{ background: {t["panel"]}; }}
     border: 1px solid {t["divider"]}; border-radius: 4px; padding: 8px 12px;
 }}
 #placeholder {{ color: {t["text2"]}; }}
+#section {{ font-size: 11px; letter-spacing: 1px; color: {t["text2"]}; font-weight: 600; }}
+#muted {{ font-size: 12px; color: {t["text2"]}; }}
+#problem {{ font-size: 12px; color: {t["red"]}; }}
+#mono {{ font-family: "{mono}"; font-size: 12px; }}
+#cardtitle {{ font-size: 15px; font-weight: 600; }}
+#colhead {{ font-size: 11px; letter-spacing: 1px; color: {t["text2"]}; }}
+#tablehead {{ background: {t["table_header"]}; border-bottom: 1px solid {t["divider"]};
+    border-top-left-radius: 4px; border-top-right-radius: 4px; }}
+#devicerow {{ background: {t["panel"]}; border-bottom: 1px solid {t["divider"]}; }}
+#devicerow[reference="true"] {{ background: {_mix(t["accent"], t["panel"], 0.08)}; }}
+#handle {{ color: {t["text3"]}; font-size: 16px; }}
+#badgeref {{ background: {t["accent"]}; color: {t["on_accent"]}; border-radius: 4px;
+    padding: 3px 9px; font-size: 12px; font-weight: 600; }}
+#badgesuggest {{ border: 1px solid {t["button_border"]}; border-radius: 4px; padding: 2px 8px;
+    font-size: 12px; color: {t["text"]}; }}
+QPushButton[role="small"] {{ min-height: 24px; padding: 0 10px; font-size: 12px; }}
+QPushButton[role="small"][open="true"] {{ background: {t["hover"]}; }}
+#filespanel {{ background: {t["input"]}; border-bottom: 1px solid {t["divider"]}; }}
+#filerow {{ border-top: 1px solid {t["divider"]}; }}
+#selectionbar {{ background: {t["table_header"]}; border-top: 1px solid {t["divider"]}; }}
+QPushButton[role="chip"] {{ min-height: 30px; padding: 0 12px; font-size: 12px; }}
+QPushButton[role="more"] {{ padding: 0; min-height: 24px; font-weight: 700; }}
+QPushButton[role="chip"]:checked {{ background: {t["accent"]}; color: {t["on_accent"]};
+    border-color: {t["accent"]}; font-weight: 600; }}
+#choices {{ border: 1px solid {t["card_border"]}; border-radius: 4px; background: {t["input"]}; }}
+#choice {{ border-bottom: 1px solid {t["divider"]}; }}
+#choice:disabled QLabel {{ color: {t["text3"]}; }}
 """

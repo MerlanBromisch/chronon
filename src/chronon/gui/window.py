@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from chronon.gui import fmt, theme
+from chronon.gui.devices_page import DevicesPage
 from chronon.gui.files_page import FilesPage
 from chronon.gui.project import Project
 
@@ -89,9 +90,12 @@ class Window(QMainWindow):
         # pages
         self.files = FilesPage(self.project, self.tokens)
         self.files.changed.connect(self.update_chrome)
+        self.devices = DevicesPage(self.project, self.tokens)
+        self.devices.changed.connect(self.update_chrome)
         self.pages = QStackedWidget()
         self.pages.addWidget(self.files)
-        for label in STEPS[1:]:
+        self.pages.addWidget(self.devices)
+        for label in STEPS[2:]:
             self.pages.addWidget(Placeholder(f"{label}: kommt in einem der nächsten Schritte."))
         self.pages.addWidget(Placeholder("Einstellungen: kommen in einem der nächsten Schritte."))
 
@@ -168,6 +172,8 @@ class Window(QMainWindow):
                 label.setProperty("current", current)
                 label.style().unpolish(label)
                 label.style().polish(label)
+        if page == 1:
+            self.devices.enter()
         self.update_chrome()
 
     def go_back(self) -> None:
@@ -187,10 +193,12 @@ class Window(QMainWindow):
         settings = self.step == SETTINGS
         self.step_label.setText("" if settings else f"SCHRITT {self.step + 1} VON {len(STEPS)}")
         self.title.setText("Einstellungen" if settings else STEPS[self.step])
-        entries = self.project.entries
-        self.header_right.setText(
-            fmt.files(len(entries)) if entries and not self.files.reading else ""
-        )
+        entries, layout = self.project.entries, self.project.layout
+        right = fmt.files(len(entries)) if entries and not self.files.reading else ""
+        if right and self.step >= 1 and layout is not None and self.project.layout_current:
+            count = len(layout.devices)
+            right += f" · {count} Gerät" + ("" if count == 1 else "e")
+        self.header_right.setText(right)
         reading = self.step == 0 and self.files.reading
         self.back.setText("Abbrechen" if reading else "Zurück")
         self.back.setVisible(reading or self.step > 0)
@@ -198,8 +206,9 @@ class Window(QMainWindow):
             self.main.setText("Fertig")
             self.main.setEnabled(True)
         elif self.step + 1 < len(STEPS):
-            self.main.setText(NEXT[self.step])
-            self.main.setEnabled(self.files.ready if self.step == 0 else False)
+            self.main.setText("Sync starten" if self.step == 1 else NEXT[self.step])
+            ready = {0: self.files.ready, 1: self.devices.ready}
+            self.main.setEnabled(ready.get(self.step, False))
         else:
             self.main.setText("Exportieren")
             self.main.setEnabled(False)

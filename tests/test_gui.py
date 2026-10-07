@@ -14,8 +14,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QEventLoop  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from chronon import audio, synth  # noqa: E402
-from chronon.gui import fmt  # noqa: E402
+from chronon import audio, devices, synth  # noqa: E402
+from chronon.gui import devices_page, fmt  # noqa: E402
 from chronon.gui.files_page import UnreadableDialog  # noqa: E402
 from chronon.gui.jobs import Job  # noqa: E402
 from chronon.gui.project import media_files  # noqa: E402
@@ -129,3 +129,95 @@ def test_jobs_run_chronon_in_a_child_process(app, tmp_path):
     _wait(app, lambda: seen)
     assert seen["failed"]["code"] == "unreadable_file"
     job.wait()
+
+
+def _device(name, *clips):
+    return devices.Device(name, [devices.Clip([Path(t) for t in c]) for c in clips])
+
+
+def test_device_texts():
+    desk = _device("Pult", [f"/a/{n}.wav" for n in range(18)])
+    zoom = _device("ZOOM", ["/z/3.WAV"], ["/z/4.WAV"])
+    cam = _device("Kamera", ["/c/1.MP4"], ["/c/2.MP4"])
+    infos = {f: _info(has_video=False, channels=1) for f in desk.files}
+    infos |= {f: _info(has_video=False) for f in zoom.files}
+    infos |= {f: _info(has_video=True) for f in cam.files}
+    assert devices_page.kind(desk, infos) == "18 Spuren parallel"
+    assert devices_page.kind(zoom, infos) == "2 Clips, Stereo"
+    assert devices_page.kind(cam, infos) == "2 Videoclips"
+    assert devices_page.rate(desk, infos) == "48 kHz"
+
+    layout = devices.Layout([desk, zoom, cam], 0, desk.files[:2])
+    assert devices_page.name_problem("zoom", layout) == "Ein Gerät heißt schon „ZOOM“."
+    assert devices_page.name_problem("zoom", layout, keep=zoom) == ""
+    assert "Zeichen" in devices_page.name_problem("A/B", layout)
+    assert devices_page.name_problem(" ", layout) == "Der Name fehlt."
+
+
+def _scene_with_clips(folder: Path) -> None:
+    scenario = synth.Scenario(
+        signal="speech",
+        seed=7,
+        devices=(
+            synth.Device("rec", (synth.Clip(0.0, 60.0),)),
+            synth.Device("cam", (synth.Clip(5.0, 15.0), synth.Clip(25.0, 20.0)), drift_ppm=20),
+            synth.Device("phone", (synth.Clip(10.0, 30.0),), sample_rate=44_100),
+        ),
+    )
+    synth.write(scenario, folder)
+    (folder / "truth.json").unlink()
+
+
+@needs_ffmpeg
+def test_devices_step_edits_the_layout(app, tmp_path):
+    _scene_with_clips(tmp_path)
+    win = Window(appearance="light")
+    win.files.add([tmp_path])
+    _wait(app, lambda: not win.files.reading)
+    win.go_on()
+    page = win.devices
+    assert win.step == 1 and page.detecting and not win.main.isEnabled()
+    _wait(app, lambda: not page.detecting)
+    layout = win.project.layout
+    assert [d.name for d in layout.devices] == ["cam", "phone", "rec"]
+    assert layout.devices[layout.reference].name == "rec" and layout.suggested == 2
+    assert win.main.text() == "Sync starten" and win.main.isEnabled()
+    assert win.header_right.text() == "4 Dateien · 3 Geräte"
+
+    # rename with a description; a taken name is refused
+    page.start_rename(layout.devices[0])
+    assert page.editing is layout.devices[0]
+    layout.devices[0].name, layout.devices[0].description = "Kamera", "Sony"
+    page.editing = None
+    page.rebuild()
+
+    # the camera's second clip becomes a device of its own, then joins the phone
+    second = layout.devices[0].files[1]
+    page.split_off([second])
+    assert [d.name for d in layout.devices] == ["Kamera", "cam_02", "phone", "rec"]
+    page.move_to_device([second])
+    dialog = page.dialog
+    assert dialog.target == 0  # the first device that can take it
+    dialog.group.button(dialog.targets.index(2)).setChecked(True)
+    dialog.accept()
+    assert [d.name for d in layout.devices] == ["Kamera", "phone", "rec"]
+    assert second in layout.devices[1].files
+
+    # merge the phone into the camera, under a new name
+    page.merge(1)
+    page.dialog.new_name.setText("Kameras")
+    assert page.dialog.ok.isEnabled()
+    page.dialog.accept()
+    assert [d.name for d in layout.devices] == ["Kameras", "rec"]
+    assert len(layout.devices[0].clips) == 3
+
+    # order and reference
+    page.move_device(1, 0)
+    assert [d.name for d in layout.devices] == ["rec", "Kameras"] and layout.reference == 0
+    page.set_reference(1)
+    assert layout.devices[1].is_reference and len(layout.tracks) == 1
+    clip = layout.devices[1].clips[1].tracks[0]
+    page.toggle_track(clip)
+    assert layout.tracks == [clip]
+    layout.check()
+    assert win.main.isEnabled()
