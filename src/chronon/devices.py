@@ -126,6 +126,72 @@ class Layout:
         if not any(set(self.tracks) <= set(c.tracks) for c in ref.clips):
             raise LayoutError("reference tracks must be parallel tracks of one clip")
 
+    # --- edits (the app's step 2; a property of the project, never of the files) -------
+    def move_device(self, k: int, to: int) -> None:
+        """Put device ``k`` at position ``to`` (the timeline's lane order)."""
+        self._edit(lambda ds: ds.insert(to, ds.pop(k)))
+
+    def move_files(self, paths: Sequence[Path], to: int | None, name: str = "") -> None:
+        """Move the clips of ``paths`` (single files) to device ``to``, or into a new device
+        called ``name`` right after the device they came from. Devices left empty go."""
+        paths = [Path(p) for p in paths]
+        clips = [c for d in self.devices for c in d.clips if any(p in c.tracks for p in paths)]
+        if any(len(c.tracks) > 1 for c in clips):
+            raise LayoutError("parallel tracks stay together")
+        target = self.devices[to] if to is not None else Device(name)
+        if target.multitrack:
+            raise LayoutError(f"{target.name!r} has parallel tracks; clips cannot join it")
+        source = self.device_of(paths[0])
+
+        def edit(ds: list[Device]) -> None:
+            for d in ds:
+                d.clips = [c for c in d.clips if c not in clips]
+            if to is None:
+                ds.insert(ds.index(source) + 1 if source in ds else len(ds), target)
+            target.clips += clips
+            ds[:] = [d for d in ds if d.clips]
+
+        self._edit(edit)
+
+    def merge(self, k: int, into: int, name: str, start: Callable[[Path], float] | None = None):
+        """Device ``k``'s clips join device ``into``, which is then called ``name``; clips are
+        ordered by ``start`` (their files' start times, default the file names)."""
+        src, dst = self.devices[k], self.devices[into]
+        if src.multitrack or dst.multitrack:
+            raise LayoutError("devices with parallel tracks cannot be merged")
+
+        def edit(ds: list[Device]) -> None:
+            dst.clips += src.clips
+            dst.clips.sort(
+                key=(lambda c: start(c.tracks[0])) if start else lambda c: _natural(c.tracks[0])
+            )
+            dst.name = name
+            ds.remove(src)
+
+        self._edit(edit, replaced={id(src): dst})
+
+    def _edit(self, edit: Callable[[list[Device]], None], replaced: dict | None = None) -> None:
+        """Change the device list, keeping the reference and the suggestion on their devices
+        (or the device a removed one went into)."""
+        replaced = replaced or {}
+        ref = self.devices[self.reference]
+        suggested = self.devices[self.suggested] if self.suggested is not None else None
+        edit(self.devices)
+
+        def where(d: Device | None) -> int | None:
+            d = replaced.get(id(d), d)
+            return next((k for k, x in enumerate(self.devices) if x is d), None)
+
+        reference = where(ref)
+        if reference is None:  # its files went elsewhere: follow the reference tracks
+            reference = next(
+                (k for k, d in enumerate(self.devices) if self.tracks[0] in d.files), 0
+            )
+        self.reference = reference
+        self.suggested = where(suggested)
+        for k, d in enumerate(self.devices):
+            d.is_reference = k == self.reference
+
     def save(self, path: Path | str) -> Path:
         self.check()
         path = Path(path)

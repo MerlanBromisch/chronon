@@ -124,3 +124,61 @@ def test_user_names_and_order_reach_files_and_timeline(tmp_path, capsys):
     lanes = {c.get("name"): c.get("lane") for c in ET.parse(out / "out.fcpxml").iter("asset-clip")}
     assert lanes["Kamera_korrigiert"] == "-1"  # the user's first device gets the first lane
     assert {lanes["Pult_Summe_korrigiert"], lanes["Pult_2_korrigiert"]} == {"-2", "-3"}
+
+
+def _clips_layout() -> devices.Layout:
+    """A desk (parallel tracks, the reference), a Zoom split in two, a camera with three
+    clips (one of them from another camera)."""
+    desk = devices.Device("Pult", [devices.Clip([Path("/a/1.wav"), Path("/a/2.wav")])])
+    zoom3 = devices.Device("ZOOM0003", [devices.Clip([Path("/z/ZOOM0003.WAV")])])
+    zoom4 = devices.Device("ZOOM0004", [devices.Clip([Path("/z/ZOOM0004.WAV")])])
+    cam = devices.Device(
+        "Kamera", [devices.Clip([Path(f"/c/{n}.MP4")]) for n in ("C2378", "C2379", "R62_0041")]
+    )
+    return devices.Layout([desk, zoom3, zoom4, cam], 0, [Path("/a/2.wav")], suggested=0)
+
+
+def test_layout_edits_keep_reference_and_suggestion():
+    layout = _clips_layout()
+    layout.move_device(0, 2)
+    assert [d.name for d in layout.devices] == ["ZOOM0003", "ZOOM0004", "Pult", "Kamera"]
+    assert layout.reference == layout.suggested == 2 and layout.devices[2].is_reference
+
+    # a file of the camera becomes a device of its own, right after the camera
+    layout.move_files([Path("/c/R62_0041.MP4")], None, "Kamera R62")
+    assert [d.name for d in layout.devices][-2:] == ["Kamera", "Kamera R62"]
+    assert len(layout.devices[3].clips) == 2
+
+    # the Zoom's halves together again, in start order
+    starts = {"/z/ZOOM0003.WAV": 0.0, "/z/ZOOM0004.WAV": -1.0}
+    layout.merge(0, 1, "ZOOM", start=lambda p: starts[p.as_posix()])
+    assert [d.name for d in layout.devices] == ["ZOOM", "Pult", "Kamera", "Kamera R62"]
+    assert [c.tracks[0].name for c in layout.devices[0].clips] == ["ZOOM0004.WAV", "ZOOM0003.WAV"]
+    assert layout.reference == layout.suggested == 1
+    layout.check()
+
+    # moving the last file away removes its device
+    layout.move_files([Path("/c/R62_0041.MP4")], 2)
+    assert [d.name for d in layout.devices] == ["ZOOM", "Pult", "Kamera"]
+    assert len(layout.devices[2].clips) == 3
+
+
+def test_parallel_tracks_stay_together():
+    layout = _clips_layout()
+    with pytest.raises(devices.LayoutError, match="stay together"):
+        layout.move_files([Path("/a/1.wav")], 1)
+    with pytest.raises(devices.LayoutError, match="parallel tracks"):
+        layout.move_files([Path("/z/ZOOM0003.WAV")], 0)
+    with pytest.raises(devices.LayoutError, match="parallel tracks"):
+        layout.merge(1, 0, "x")
+
+
+def test_merging_into_the_reference_keeps_it():
+    layout = _clips_layout()
+    layout.reference, layout.tracks = 1, [Path("/z/ZOOM0003.WAV")]
+    layout.merge(2, 1, "ZOOM")  # default order: by file name
+    assert layout.devices[layout.reference].name == "ZOOM"
+    assert layout.suggested == 0
+    layout.merge(1, 2, "Alles")  # the reference device itself goes into another one
+    assert layout.devices[layout.reference].name == "Alles"
+    layout.check()
