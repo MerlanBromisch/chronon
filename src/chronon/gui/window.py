@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from chronon.gui import fmt, theme
+from chronon.gui.audition import Overviews, Player
 from chronon.gui.devices_page import DevicesPage
 from chronon.gui.files_page import FilesPage
 from chronon.gui.project import Project
@@ -90,7 +91,9 @@ class Window(QMainWindow):
         # pages
         self.files = FilesPage(self.project, self.tokens)
         self.files.changed.connect(self.update_chrome)
-        self.devices = DevicesPage(self.project, self.tokens)
+        self.player = Player(self)
+        self.overviews = Overviews(self)
+        self.devices = DevicesPage(self.project, self.tokens, self.overviews, self.player)
         self.devices.changed.connect(self.update_chrome)
         self.pages = QStackedWidget()
         self.pages.addWidget(self.files)
@@ -155,6 +158,16 @@ class Window(QMainWindow):
         self.step_buttons.addButton(b, page)
         return b
 
+    def closeEvent(self, event):  # noqa: N802 (Qt API)
+        self.shutdown()
+        super().closeEvent(event)
+
+    def shutdown(self) -> None:
+        """Stop playback and every child process before the window goes."""
+        self.player.stop()
+        self.overviews.stop()
+        self.files.cancel()
+
     def apply_theme(self) -> None:
         app = QApplication.instance()
         app.setStyle("Fusion")
@@ -163,6 +176,7 @@ class Window(QMainWindow):
 
     # --- navigation -------------------------------------------------------------------
     def show_step(self, page: int) -> None:
+        self.player.stop()
         self.step = page
         self.pages.setCurrentIndex(page)
         self.step_buttons.button(page).setChecked(True)

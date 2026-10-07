@@ -15,7 +15,7 @@ from PySide6.QtCore import QEventLoop  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from chronon import audio, devices, synth  # noqa: E402
-from chronon.gui import devices_page, fmt  # noqa: E402
+from chronon.gui import devices_page, fmt, settings  # noqa: E402
 from chronon.gui.files_page import UnreadableDialog  # noqa: E402
 from chronon.gui.jobs import Job  # noqa: E402
 from chronon.gui.project import media_files  # noqa: E402
@@ -221,3 +221,28 @@ def test_devices_step_edits_the_layout(app, tmp_path):
     assert layout.tracks == [clip]
     layout.check()
     assert win.main.isEnabled()
+    win.close()
+
+
+@needs_ffmpeg
+def test_audition_shows_the_reference_track(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "cache_dir", lambda: tmp_path / "cache")
+    _scene_with_clips(tmp_path / "media")
+    win = Window(appearance="dark")
+    win.files.add([tmp_path / "media"])
+    _wait(app, lambda: not win.files.reading)
+    win.go_on()
+    _wait(app, lambda: not win.devices.detecting)
+    audition = win.devices.audition
+    assert audition.path == win.project.layout.tracks[0]
+    assert audition.duration == pytest.approx(60.0, abs=0.01)
+    _wait(app, lambda: len(audition.wave.peaks) > 0)  # the overview, from a job
+    assert len(audition.wave.peaks) == 60 * 100
+    audition.move_to(75)
+    assert audition.pos == 60.0 and audition.time.text() == "0:01:00"
+    audition.move_to(12.4)
+    assert audition.slider.value() == round(1000 * 12.4 / 60)
+    # the next file of the reference device (a clip device: its clips)
+    win.devices.set_reference(0)
+    assert audition.title.text().startswith("VORHÖREN")
+    win.close()

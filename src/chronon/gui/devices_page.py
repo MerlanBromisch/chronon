@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from chronon import audio, devices
 from chronon.gui import fmt
+from chronon.gui.audition import Audition, Overviews, Player
 from chronon.gui.project import Detector, Project
 
 DRAG_MIME = "application/x-chronon-device"
@@ -263,7 +264,9 @@ class ChooseDevice(QDialog):
 class DevicesPage(QWidget):
     changed = Signal()
 
-    def __init__(self, project: Project, tokens: dict[str, str]):
+    def __init__(
+        self, project: Project, tokens: dict[str, str], overviews: Overviews, player: Player
+    ):
         super().__init__()
         self.project = project
         self.tokens = tokens
@@ -283,8 +286,17 @@ class DevicesPage(QWidget):
         self.list_box.setSpacing(0)
         self.tracks_card = QFrame()
         self.tracks_card.setObjectName("card")
-        self.tracks_box = QVBoxLayout(self.tracks_card)
-        self.tracks_box.setContentsMargins(18, 16, 18, 16)
+        card = QVBoxLayout(self.tracks_card)
+        card.setContentsMargins(18, 16, 18, 16)
+        card.setSpacing(12)
+        self.tracks_box = QVBoxLayout()
+        card.addLayout(self.tracks_box)
+        rule = QFrame()
+        rule.setObjectName("rule")
+        rule.setFixedHeight(1)
+        card.addWidget(rule)
+        self.audition = Audition(tokens, overviews, player)
+        card.addWidget(self.audition)
 
         heading = QHBoxLayout()
         heading.addWidget(_label("1 · GERÄTE PRÜFEN, REFERENZ WÄHLEN", "section"))
@@ -594,6 +606,14 @@ class DevicesPage(QWidget):
         flow.finish()
         self.tracks_box.addWidget(chips)
         self.chip_area = chips
+        infos = self.project.infos
+        listen_to = [t for t in choices if t in layout.tracks] + [
+            t for t in choices if t not in layout.tracks
+        ]
+        self.audition.set_tracks(
+            [(t, ref.track_label(t) if multi else t.name) for t in listen_to],
+            {t: infos[t].duration_s for t in choices if t in infos},
+        )
 
     # --- actions ----------------------------------------------------------------------
     def set_reference(self, k: int) -> None:

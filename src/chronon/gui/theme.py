@@ -196,6 +196,12 @@ QDialog {{ background: {t["panel"]}; }}
     border: 1px solid {t["divider"]}; border-radius: 4px; padding: 8px 12px;
 }}
 #placeholder {{ color: {t["text2"]}; }}
+#rule {{ background: {t["divider"]}; }}
+#bigtime {{ font-family: "{mono}"; font-size: 15px; padding: 0 8px; }}
+QSlider::groove:horizontal {{ height: 4px; background: {t["divider"]}; border-radius: 2px; }}
+QSlider::sub-page:horizontal {{ background: {t["text2"]}; border-radius: 2px; }}
+QSlider::handle:horizontal {{ background: {t["accent"]}; width: 12px; margin: -7px 0;
+    border-radius: 2px; }}
 #section {{ font-size: 11px; letter-spacing: 1px; color: {t["text2"]}; font-weight: 600; }}
 #muted {{ font-size: 12px; color: {t["text2"]}; }}
 #problem {{ font-size: 12px; color: {t["red"]}; }}
