@@ -65,8 +65,15 @@ when a field changes meaning or goes away; new fields may appear any time) and `
   in real work (seconds analysed, samples written, files checked), at most ten events a second.
 - `result` (exactly one, last, on success): `files` are the same rows as the report file —
   `analyze`: offset, drift, confidence, `reliable`, windows, `via` / `drift_from` /
-  `linked_via`, `notes`; `sync`: the `chronon-sync.json` rows; `correct`: the
-  `chronon-report.json` rows. `correct` exits 1 when `failed` > 0.
+  `linked_via`, `notes`, and `placement` (where the file lands on a timeline of the originals:
+  `position_s`, `duration_s`, `has_video`, `video_error_ms`, `variable_rate`); plus
+  `frame_rate` of the timeline and `analysis` (the file of `--save`, else null). `sync`: the
+  `chronon-sync.json` rows; `correct`: the `chronon-report.json` rows, `timeline` null with
+  `--no-timeline`. `correct` exits 1 when `failed` > 0.
+- **Analyse once, export later:** `analyze --save A.json` keeps the analysis;
+  `sync` / `correct --analysis A.json` export from it without measuring again (the app's Sync
+  step, then its Export step). The file stores each source's size and modification time; a
+  changed or missing source is an `error`.
 - `error`: the run stopped (exit code 1); `message` is meant for the user.
 - Files without a reliable match are not errors: their row says `"reliable": false`.
 

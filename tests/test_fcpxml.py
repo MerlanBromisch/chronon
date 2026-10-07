@@ -151,7 +151,7 @@ def test_correct_mutes_camera_audio_and_uses_the_corrected_file(tmp_path):
     audio_clips = [c for c in clips if c.get("srcEnable") is None]
     assert {c.get("offset") for c in audio_clips} == {"0s"}  # padded: all start at zero
     srcs = {r.get("src") for r in root.iter("media-rep")}
-    assert (tmp_path / "out" / "cam.wav").resolve().as_uri() in srcs
+    assert (tmp_path / "out" / "cam_korrigiert.wav").resolve().as_uri() in srcs
     assert video.resolve().as_uri() in srcs
 
 
@@ -179,7 +179,7 @@ def test_corrected_audio_is_named_apart_from_its_video(tmp_path):
     rec, video = _scene(tmp_path)
     correct.run([rec], [video], tmp_path / "out", name="t")
     names = set(_clips(tmp_path / "out" / "t.fcpxml"))
-    assert {"cam", "cam audio", "rec_01"} <= names
+    assert {"cam", "cam_korrigiert", "rec_01_korrigiert"} <= names
 
 
 def test_timeline_is_rebuilt_from_the_report(tmp_path):
