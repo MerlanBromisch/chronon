@@ -21,10 +21,11 @@ from chronon.gui.audition import Overviews, Player
 from chronon.gui.devices_page import DevicesPage
 from chronon.gui.files_page import FilesPage
 from chronon.gui.project import Project
+from chronon.gui.result_page import ResultPage
+from chronon.gui.sync_page import SyncPage
 
 STEPS = ["Dateien", "Geräte & Referenz", "Sync", "Ergebnis", "Hören", "Export"]
-# "&&": a single & marks a keyboard shortcut on a button
-NEXT = {k: f"Weiter: {STEPS[k + 1]}".replace("&", "&&") for k in range(len(STEPS) - 1)}
+NEXT = {k: f"Weiter: {STEPS[k + 1]}" for k in range(len(STEPS) - 1)}
 SETTINGS = len(STEPS)  # page index of the settings
 
 
@@ -95,10 +96,16 @@ class Window(QMainWindow):
         self.overviews = Overviews(self)
         self.devices = DevicesPage(self.project, self.tokens, self.overviews, self.player)
         self.devices.changed.connect(self.update_chrome)
+        self.sync = SyncPage(self.project)
+        self.sync.changed.connect(self.update_chrome)
+        self.sync.finished.connect(lambda: self.show_step(3))
+        self.result = ResultPage(self.project, self.tokens)
+        self.result.changed.connect(self.update_chrome)
+        self.result.other_reference.connect(lambda: self.show_step(1))
         self.pages = QStackedWidget()
-        self.pages.addWidget(self.files)
-        self.pages.addWidget(self.devices)
-        for label in STEPS[2:]:
+        for page in (self.files, self.devices, self.sync, self.result):
+            self.pages.addWidget(page)
+        for label in STEPS[4:]:
             self.pages.addWidget(Placeholder(f"{label}: kommt in einem der nächsten Schritte."))
         self.pages.addWidget(Placeholder("Einstellungen: kommen in einem der nächsten Schritte."))
 
@@ -186,21 +193,53 @@ class Window(QMainWindow):
                 label.setProperty("current", current)
                 label.style().unpolish(label)
                 label.style().polish(label)
-        if page == 1:
-            self.devices.enter()
+        enter = getattr(self.pages.widget(page), "enter", None)
+        if enter is not None:
+            enter()
         self.update_chrome()
 
     def go_back(self) -> None:
         if self.step == 0 and self.files.reading:
             self.files.cancel()
-        elif self.step == SETTINGS or self.step > 0:
-            self.show_step(0 if self.step == SETTINGS else self.step - 1)
+        elif self.step == 2 and self.sync.running:
+            self.sync.cancel()
+        elif self.step == SETTINGS:
+            self.show_step(0)
+        elif self.step > 0:
+            self.show_step(self.step - 1)
 
     def go_on(self) -> None:
         if self.step == SETTINGS:
             self.show_step(0)
+        elif self.step == 1:  # "Sync starten": measure again only when the devices changed
+            self.show_step(2)
+            if not self.project.synced_now:
+                self.sync.start()
+        elif self.step == 2 and self.sync.state in ("cancelled", "failed", "idle"):
+            self.sync.start()
         elif self.step + 1 < len(STEPS):
             self.show_step(self.step + 1)
+
+    def footer(self) -> tuple[str | None, str, bool]:
+        """(left button or None, main button, main enabled) for the current page."""
+        step = self.step
+        if step == SETTINGS:
+            return "Zurück", "Fertig", True
+        if step == 0:
+            return ("Abbrechen" if self.files.reading else None), NEXT[0], self.files.ready
+        if step == 1:
+            return "Zurück", "Sync starten", self.devices.ready
+        if step == 2:
+            if self.sync.running:
+                return "Abbrechen", NEXT[2], False
+            if self.sync.state in ("cancelled", "failed"):
+                return "Zurück", "Sync neu starten", self.devices.ready
+            if self.sync.state == "idle":
+                return "Zurück", "Sync starten", self.devices.ready
+            return "Zurück", NEXT[2], self.project.synced_now
+        if step + 1 < len(STEPS):
+            return "Zurück", NEXT[step], self.project.synced_now
+        return "Zurück", "Exportieren", False
 
     def update_chrome(self) -> None:
         """Header texts and footer buttons for the current page and its state."""
@@ -213,16 +252,8 @@ class Window(QMainWindow):
             count = len(layout.devices)
             right += f" · {count} Gerät" + ("" if count == 1 else "e")
         self.header_right.setText(right)
-        reading = self.step == 0 and self.files.reading
-        self.back.setText("Abbrechen" if reading else "Zurück")
-        self.back.setVisible(reading or self.step > 0)
-        if settings:
-            self.main.setText("Fertig")
-            self.main.setEnabled(True)
-        elif self.step + 1 < len(STEPS):
-            self.main.setText("Sync starten" if self.step == 1 else NEXT[self.step])
-            ready = {0: self.files.ready, 1: self.devices.ready}
-            self.main.setEnabled(ready.get(self.step, False))
-        else:
-            self.main.setText("Exportieren")
-            self.main.setEnabled(False)
+        back, main, enabled = self.footer()
+        self.back.setVisible(back is not None)
+        self.back.setText(back or "")
+        self.main.setText(main.replace("&", "&&"))  # a single & marks a shortcut
+        self.main.setEnabled(enabled)

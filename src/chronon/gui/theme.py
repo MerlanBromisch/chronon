@@ -197,6 +197,43 @@ QDialog {{ background: {t["panel"]}; }}
 }}
 #placeholder {{ color: {t["text2"]}; }}
 #rule {{ background: {t["divider"]}; }}
+#percent {{ font-size: 22px; }}
+QProgressBar[stopped="true"]::chunk {{ background: {t["text3"]}; }}
+#steprow {{ border-top: 1px solid {t["divider"]}; }}
+#stepmark {{ border: 1px dashed {t["control_border"]}; border-radius: 4px; color: {t["green"]};
+    font-weight: 700; }}
+#stepmark[state="done"] {{ border: 1px solid {t["green_border"]};
+    background: {_mix(t["green"], t["panel"], 0.12)}; }}
+#stepmark[state="running"] {{ border: none; }}
+QLabel[state="waiting"], QLabel[state="cancelled"] {{ color: {t["text3"]}; }}
+#badge_ok, #badge_wanders, #badge_unsure, #badge_bad, #badge_ref {{
+    border-radius: 4px; padding: 2px 9px; font-size: 12px; font-weight: 500; }}
+#badge_ok {{ color: {t["green"]}; border: 1px solid {t["green_border"]};
+    background: {_mix(t["green"], t["panel"], 0.12)}; }}
+#badge_wanders {{ color: {t["amber"]}; border: 1px solid {t["amber_border"]};
+    background: {_mix(t["amber"], t["panel"], 0.12)}; }}
+#badge_unsure {{ color: {t["text2"]}; border: 1px dashed {t["control_border"]}; }}
+#badge_bad {{ color: {t["red"]}; border: 1px solid {t["red_border"]};
+    background: {_mix(t["red"], t["panel"], 0.12)}; }}
+#badge_ref {{ color: {t["on_accent"]}; background: {t["accent"]}; border: 1px solid {t["accent"]};
+    font-weight: 600; }}
+#banner_warn {{ background: {_mix(t["amber"], t["background"], 0.10)};
+    border: 1px solid {t["amber_border"]}; border-radius: 4px; }}
+#banner_error {{ background: {_mix(t["red"], t["background"], 0.10)};
+    border: 1px solid {t["red_border"]}; border-radius: 4px; }}
+#bannericon_warn {{ color: {t["amber"]}; font-size: 18px; font-weight: 700; }}
+#bannericon_error {{ color: {t["red"]}; font-size: 18px; font-weight: 700; }}
+#square_ok {{ color: {t["green"]}; border: 1px solid {t["green_border"]}; border-radius: 4px;
+    background: {_mix(t["green"], t["panel"], 0.12)}; font-size: 20px; font-weight: 700; }}
+#square_bad {{ color: {t["red"]}; border: 1px solid {t["red_border"]}; border-radius: 4px;
+    background: {_mix(t["red"], t["panel"], 0.12)}; font-size: 20px; font-weight: 700; }}
+QPushButton[role="segment"] {{ border-radius: 0; min-height: 28px; }}
+QPushButton[role="segment"][edge="first"] {{ border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px; }}
+QPushButton[role="segment"][edge="last"] {{ border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px; }}
+QPushButton[role="segment"]:checked {{ background: {t["accent"]}; color: {t["on_accent"]};
+    border-color: {t["accent"]}; font-weight: 600; }}
 #bigtime {{ font-family: "{mono}"; font-size: 15px; padding: 0 8px; }}
 QSlider::groove:horizontal {{ height: 4px; background: {t["divider"]}; border-radius: 2px; }}
 QSlider::sub-page:horizontal {{ background: {t["text2"]}; border-radius: 2px; }}
