@@ -22,6 +22,7 @@ from chronon import messages
 
 RESAMPLE_QUALITY = "HQ"
 EXCERPT_PAD_S = 0.05  # extra audio read on both sides of an excerpt for the resampler
+SEEK_MARGIN_S = 2.0  # ffmpeg excerpts: decoded from this long before the start
 
 
 class AudioError(messages.UserError, RuntimeError):
@@ -187,7 +188,7 @@ def excerpt(path: Path | str, start_s: float, seconds: float, rate: int) -> np.n
     zeros before and after the recording; always ``round(seconds * rate)`` samples.
 
     Fast anywhere in a long file: PCM files (and whatever else libsndfile reads) seek to the
-    sample, everything else is decoded by ffmpeg from the nearest point before ``start_s``."""
+    sample, everything else is decoded by ffmpeg from shortly before ``start_s``."""
     n = round(seconds * rate)
     try:
         f = sf.SoundFile(str(path))
@@ -214,15 +215,21 @@ def _excerpt_ffmpeg(path: Path | str, start_s: float, seconds: float, rate: int,
     take = seconds - lead / rate
     if take <= 0:
         return np.zeros(n, dtype=np.float32)
+    # Seek coarsely before the excerpt (fast), then cut it exactly from the decoded audio.
+    # Seeking straight to the start lands up to ~1100 samples off on AAC in newer ffmpeg
+    # (the encoder delay is lost), and so does any seek near the file's start.
+    start = max(start_s, 0.0)
+    seek = start - SEEK_MARGIN_S if start >= 2 * SEEK_MARGIN_S else 0.0
     cmd = [
         _tool("ffmpeg"),
         "-nostdin",
         "-v",
         "error",
-        "-ss",
-        f"{max(start_s, 0.0):.6f}",
+        *(["-ss", f"{seek:.6f}"] if seek else []),
         "-i",
         str(path),
+        "-ss",
+        f"{start - seek:.6f}",
         "-t",
         f"{take:.6f}",
         "-map",

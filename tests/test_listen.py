@@ -57,9 +57,13 @@ def test_excerpt_is_exact_and_fast_paths_agree(tmp_path):
     # ffmpeg (for video and compressed audio) cuts at the same place
     y = audio._excerpt_ffmpeg(cam, 5.25, 1.0, RATE, RATE)
     assert _lag(x, y) == 0 and np.corrcoef(x, y)[0, 1] > 0.99
-    # a compressed copy, decoded by ffmpeg from the nearest point before
-    z = audio.excerpt(_aac(cam, tmp_path / "cam.m4a"), 5.25, 1.0, RATE)
-    assert _lag(x, z) == 0 and np.corrcoef(x, z)[0, 1] > 0.9
+    # a compressed copy, decoded by ffmpeg from shortly before (near the start too, where
+    # newer ffmpeg seeks wrong)
+    m4a = _aac(cam, tmp_path / "cam.m4a")
+    for start in (0.0, 0.5, 2.7, 5.25, 17.0):
+        x = audio.excerpt(cam, start, 1.0, RATE)
+        z = audio.excerpt(m4a, start, 1.0, RATE)
+        assert _lag(x, z) == 0 and np.corrcoef(x, z)[0, 1] > 0.9, start
 
 
 @pytest.mark.parametrize("compressed", [False, True])
