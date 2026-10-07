@@ -148,8 +148,11 @@ Fonts: IBM Plex Sans (UI) and IBM Plex Mono (numbers, times, paths). Sizes: 22/6
 
 Decided 2026-10-07 after reviewing revision 1:
 
-1. **Sync mode (11a):** no FCPXML checkbox. The timeline is the only output of "Sync", so the row
-   is left out (or shown ticked and disabled). The checkbox exists only for "Korrigiert".
+1. **Timeline row (11, 11a, 11b, 12):** the "FCPXML" checkbox becomes a row **"Timeline für"**
+   with a dropdown, one choice. Version 1: "Final Cut Pro / Logic"; "Korrigiert" also offers
+   "Keine" (audio only). "Sync" has no "Keine": the timeline is its only output. Premiere Pro
+   and DaVinci Resolve are added to the list later (#7, #8) without layout changes. For a
+   timeline in another format, the user exports again.
 2. **Move / merge dialogs (05b, 05c):** multitrack devices (Presonus, x32) are not offered as
    targets: show them disabled. Only clip devices are regrouped or merged.
 3. **Names of parallel tracks (14):** a multitrack device is written as one file per track,
