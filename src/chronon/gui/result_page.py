@@ -80,6 +80,8 @@ def lanes(project: Project) -> tuple[list[Lane], float]:
             if r is not None:
                 start, length = r["placement"]["position_s"], r["placement"]["duration_s"]
                 verdict = "ref" if r.get("is_reference") else texts.verdict(r)
+                if k == layout.reference and verdict == "ok":
+                    verdict = "ref"  # the whole device is the reference, each clip for its time
                 shown = Path(chosen[0] if chosen else r.get("via") or f)
                 regions.append(Region(start, length, shown, verdict, r.get("drift_ppm"), name))
             elif f in infos:  # a reference track: on the reference clock
@@ -290,6 +292,7 @@ def ruler_label(seconds: float, total: float) -> str:
 class ResultPage(QWidget):
     changed = Signal()
     other_reference = Signal()
+    compare_tracks = Signal()
 
     def __init__(
         self, project: Project, tokens: dict[str, str], overviews: Overviews | None = None
@@ -349,9 +352,18 @@ class ResultPage(QWidget):
         titles.addWidget(label(self._reference_text(), "hint"))
         head.addLayout(titles)
         head.addStretch()
+        actions = QVBoxLayout()
+        actions.setSpacing(6)
+        ref = layout.devices[layout.reference]
+        if unsure and ref.multitrack:  # what to try first: other tracks of the desk
+            tracks = button("Andere Vergleichsspuren wählen …")
+            tracks.clicked.connect(self.compare_tracks.emit)
+            actions.addWidget(tracks)
         other = button("Andere Referenz wählen …")
         other.clicked.connect(self.other_reference.emit)
-        head.addWidget(other, 0, Qt.AlignmentFlag.AlignTop)
+        actions.addWidget(other)
+        actions.addStretch()
+        head.addLayout(actions)
         self.column.addLayout(head)
         if unsure:
             self.column.addWidget(label(
@@ -384,7 +396,9 @@ class ResultPage(QWidget):
         multi = any(len(c.tracks) > 1 for c in ref.clips)
         if multi:
             names = ", ".join(ref.track_label(t) for t in layout.tracks)
-            return f"Referenz: {ref.name} · Spuren {names}"
+            return f"Referenz: {ref.name} · Vergleichsspuren {names}"
+        if len(ref.clips) > 1:
+            return f"Referenz: {ref.name} · {len(ref.clips)} Aufnahmen"
         return f"Referenz: {ref.name} · {layout.tracks[0].name}"
 
     def toggle_details(self) -> None:
@@ -419,7 +433,9 @@ class ResultPage(QWidget):
                 grid.addWidget(label(f"<b>{d.name}</b> · {Path(r['file']).name}"), row, 0)
                 grid.addWidget(label(clock_ms(r["placement"]["position_s"]), "mono"), row, 1)
                 grid.addWidget(label(ppm(r["drift_ppm"]), "mono"), row, 2)
-                grid.addWidget(badge(texts.verdict(r)), row, 3, LEFT_MIDDLE)
+                verdict = texts.verdict(r)
+                tag = badge("ref", "Referenz") if d is ref and verdict == "ok" else badge(verdict)
+                grid.addWidget(tag, row, 3, LEFT_MIDDLE)  # the whole device is the reference
                 grid.addWidget(label(hint(r), wrap=True), row, 4)
                 row += 1
         return frame

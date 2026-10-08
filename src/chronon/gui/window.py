@@ -99,6 +99,7 @@ class Window(QMainWindow):
         self.result = ResultPage(self.project, self.tokens, self.overviews)
         self.result.changed.connect(self.update_chrome)
         self.result.other_reference.connect(lambda: self.show_step(1))
+        self.result.compare_tracks.connect(self._compare_tracks)
         self.listen = ListenPage(self.project, self.tokens, self.player, self.overviews)
         self.listen.changed.connect(self.update_chrome)
         self.export = ExportPage(self.project, self.tokens)
@@ -179,6 +180,10 @@ class Window(QMainWindow):
         for job in self.findChildren(Job):  # sync / export, maybe still finishing
             job.cancel()
             job.wait(5000)
+
+    def _compare_tracks(self) -> None:
+        self.show_step(1)
+        self.devices.open_compare()
 
     def _prefetch_waves(self) -> None:
         """While the result is read: the waveforms listening needs, in the order it shows

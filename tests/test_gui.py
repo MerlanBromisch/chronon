@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEventLoop  # noqa: E402
 from PySide6.QtGui import QFontMetrics  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from chronon import audio, devices, synth  # noqa: E402
 from chronon.gui import devices_page, fmt, settings  # noqa: E402
@@ -451,3 +451,35 @@ def test_the_result_ruler_labels_like_an_editor():
     assert ruler_label(5400, 4 * 3600) == "1:30:00"
     assert ruler_label(75, 300) == "1:15"
     assert ruler_steps(60, 1000) == (10, 2)
+
+
+def test_a_desks_comparison_tracks_open_only_when_asked(app):
+    from chronon.gui.project import Entry
+
+    desk = _device("Pult", [f"/a/{n}.wav" for n in range(1, 19)])
+    zoom = _device("ZOOM", ["/z/3.WAV"], ["/z/4.WAV"])
+    win = Window(appearance="light")
+    project = win.project
+    project.entries = [Entry(f, _info(has_video=False, channels=1)) for f in desk.files]
+    project.entries += [Entry(f, _info(has_video=False)) for f in zoom.files]
+    project.suggested_tracks = desk.files[16:]  # 17, 18
+    project.layout = devices.Layout([desk, zoom], 0, list(project.suggested_tracks), 0)
+    page = win.devices
+    page.rebuild()
+
+    def texts_shown():
+        return " ".join(w.text() for w in page.tracks_card.findChildren(QLabel))
+
+    assert "Vergleichsspuren:" in texts_shown() and "automatisch" in texts_shown()
+    assert not getattr(page, "chips", None) or not page.compare_open  # collapsed
+    page.open_compare()  # "Andere Vergleichsspuren wählen …" in the result
+    assert len(page.chips) == 18
+    page.toggle_track(desk.files[0])
+    assert "von Hand" in texts_shown() and desk.files[0] in project.layout.tracks
+    page.automatic_tracks()
+    assert project.layout.tracks == desk.files[16:]
+    # a recorder's clips: nothing to choose, both are the reference
+    page.set_reference(1)
+    assert "jede für ihre Zeit" in texts_shown()
+    assert [t for t, _ in page.audition.tracks] == [Path("/z/3.WAV"), Path("/z/4.WAV")]
+    win.close()
