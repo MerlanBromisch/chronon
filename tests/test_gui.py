@@ -6,6 +6,7 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytest.importorskip("PySide6", reason="the app's extra (uv sync --extra gui) is not installed")
@@ -188,10 +189,10 @@ def test_devices_step_edits_the_layout(app, tmp_path):
     assert win.main.text() == "Sync starten" and win.main.isEnabled()
     assert win.header_right.text() == "4 Dateien · 3 Geräte"
 
-    # rename with a description; a taken name is refused
+    # rename; a taken name is refused
     page.start_rename(layout.devices[0])
     assert page.editing is layout.devices[0]
-    layout.devices[0].name, layout.devices[0].description = "Kamera", "Sony"
+    layout.devices[0].name = "Kamera"
     page.editing = None
     page.rebuild()
 
@@ -245,7 +246,9 @@ def test_audition_shows_the_reference_track(app, tmp_path, monkeypatch):
     audition.move_to(75)
     assert audition.pos == 60.0 and audition.time.text() == "0:01:00"
     audition.move_to(12.4)
-    assert audition.slider.value() == round(1000 * 12.4 / 60)
+    assert audition.wave.cursor == pytest.approx(12.4 / 60)
+    audition.wave.seek.emit(0.25)  # a click into the waveform
+    assert audition.pos == pytest.approx(15.0)
     # the next file of the reference device (a clip device: its clips)
     win.devices.set_reference(0)
     assert audition.title.text().startswith("VORHÖREN")
@@ -266,6 +269,22 @@ def test_the_whole_app_from_files_to_export(app, tmp_path, monkeypatch):
 
     # what the steps show on the way
     assert win.result.ready and win.listen.rows and win.export.outcome["failed"] == 0
+    # the result's timeline: a lane per device, a region per clip, named by its file
+    from chronon.gui.result_page import lanes
+
+    timeline_lanes, total = lanes(win.project)
+    assert [lane.name for lane in timeline_lanes] == ["cam", "phone", "rec"]
+    assert [r.name for r in timeline_lanes[0].regions] == ["cam_01.wav", "cam_02.wav"]
+    assert total > 0 and timeline_lanes[2].regions[0].verdict == "ref"
+    # listening shows the whole file, the reference for the same time; a click moves there
+    listen_ = win.listen
+    start, end = listen_.span
+    assert len(listen_.file_wave.peaks) == pytest.approx((end - start) * 100, abs=2)
+    assert len(listen_.ref_wave.peaks) == pytest.approx((end - start) * 100, abs=2)
+    listen_.file_wave.seek.emit(0.5)
+    assert listen_.pos == pytest.approx((start + end) / 2)
+    listen_.move_to(end + 60)  # stays within the file
+    assert listen_.pos == end
     logs = sorted(p.name for p in (win.project.folder() / "logs").iterdir())
     assert logs == ["export-1.log", "sync-1.log"]
     assert (win.project.folder() / "devices.json").exists()
@@ -344,3 +363,87 @@ def test_choosing_sync_unchecks_korrigiert(app):
     assert not page.correct_choice.radio.isChecked()
     assert not page.corrected.isVisibleTo(page)  # the corrected-audio rows go away
     win.close()
+
+
+def test_progress_says_100_only_when_done(app):
+    win = Window(appearance="light")
+    page = win.export
+    page._plan([{"id": "writing", "kind": "write"}, {"id": "verifying", "kind": "verify"}])
+    page._progress({"task": "writing", "done": 1.0})
+    assert page.percent.text() == "90 %"  # writing done, the check still to come
+    page._progress({"task": "verifying", "done": 1.0})
+    assert page.percent.text() == "99 %"  # 100 % only with the result
+    win.sync._plan([{"id": "drift", "kind": "drift", "device": None}])
+    win.sync._progress({"task": "drift", "done": 1.0})
+    assert win.sync.number.text() == "99 %"
+    win.close()
+
+
+def test_playback_is_one_continuous_stream_decoded_ahead(app):
+    from chronon.gui import audition
+
+    rate = audition.RATE
+
+    def source(start, seconds):  # a ramp: its sample index, so gaps and overlaps show
+        first = round(start * rate)
+        n = round(seconds * rate)
+        ramp = np.arange(first, first + n, dtype=np.float32)
+        return np.column_stack([ramp, ramp])
+
+    stream = audition._Stream(source, 2.0, 2.0 + 9.5, None)
+    stream.begin()
+    got = bytearray()
+    end = time.monotonic() + 10
+    while time.monotonic() < end:
+        with stream.lock:
+            done = stream.finished and not stream.data
+        if done:
+            break
+        got += stream.readData(1 << 16)
+    stream.stop()
+    x = np.frombuffer(bytes(got), dtype="<f4").reshape(-1, 2)[:, 0]
+    x = x[x > 0]  # silence where decoding fell behind is allowed, gaps in the audio are not
+    assert len(x) == round(9.5 * rate)
+    assert np.array_equal(x, np.arange(2 * rate, 2 * rate + len(x), dtype=np.float32))
+
+
+def test_overviews_compute_two_at_a_time_and_what_is_shown_first(app, tmp_path, monkeypatch):
+    from chronon.gui import audition
+
+    monkeypatch.setattr(settings, "cache_dir", lambda: tmp_path / "cache")
+    started = []
+
+    class FakeJob:
+        def __init__(self, args, parent=None):
+            self.path = Path(args[1])
+            self.result, self.progress, self.failed = _Sig(), _Sig(), _Sig()
+
+        def start(self):
+            started.append(self.path.name)
+
+    class _Sig:
+        def connect(self, f):
+            pass
+
+    monkeypatch.setattr(audition, "Job", FakeJob)
+    files = []
+    for name in "abcde":
+        f = tmp_path / f"{name}.wav"
+        f.write_bytes(b"x")
+        files.append(f)
+    o = audition.Overviews()
+    o.prefetch(files[:4])
+    assert started == ["a.wav", "b.wav"]  # two at a time
+    assert o.get(files[4]) is None  # shown now: ahead of the rest
+    o._failed(files[0])
+    assert started == ["a.wav", "b.wav", "e.wav"]
+
+
+def test_the_result_ruler_labels_like_an_editor():
+    from chronon.gui.result_page import ruler_label, ruler_steps
+
+    major, minor = ruler_steps(4 * 3600, 800)  # a 4 h project on 800 px
+    assert major == 1800 and 800 * major / (4 * 3600) >= 90 and major % minor == 0
+    assert ruler_label(5400, 4 * 3600) == "1:30:00"
+    assert ruler_label(75, 300) == "1:15"
+    assert ruler_steps(60, 1000) == (10, 2)

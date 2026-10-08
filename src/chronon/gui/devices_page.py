@@ -36,7 +36,7 @@ from chronon.gui.audition import Audition, Overviews, Player
 from chronon.gui.project import Detector, Project
 
 DRAG_MIME = "application/x-chronon-device"
-COLUMNS = (34, 30, 0, 160, 96, 168, 112, 36)  # handle, radio, name, kind, rate, role, files, …
+COLUMNS = (34, 30, 0, 160, 96, 180, 112, 36)  # handle, radio, name, kind, rate, role, files, …
 
 
 # --- texts -------------------------------------------------------------------------------
@@ -175,8 +175,7 @@ class ChooseDevice(QDialog):
             if merge and d is current:
                 continue
             here = d is current
-            text = f"<b>{d.name}</b>" + (f" · {d.description}" if d.description else "")
-            text += " · aktuell" if here else ""
+            text = f"<b>{d.name}</b>" + (" · aktuell" if here else "")
             radio = QRadioButton()
             row = self._choice(radio, _label(text), _label(kind(d, infos), "muted"))
             disabled = here or d.multitrack
@@ -406,14 +405,32 @@ class DevicesPage(QWidget):
         grid.setColumnStretch(2, 1)
         return grid
 
+    @staticmethod
+    def _cell(grid: QGridLayout, content: QWidget | QHBoxLayout, col: int) -> None:
+        """Put ``content`` in a column of exactly its width, so the columns of the header and
+        of every row line up whatever a row holds."""
+        box = QWidget()
+        box.setFixedWidth(COLUMNS[col])
+        line = QHBoxLayout(box)
+        line.setContentsMargins(0, 0, 0, 0)
+        if isinstance(content, QWidget):
+            line.addWidget(content)
+            line.addStretch()
+        else:
+            line.addLayout(content)
+        grid.addWidget(box, 0, col)
+
     def _header(self) -> QFrame:
         row = QFrame()
         row.setObjectName("tablehead")
         row.setFixedHeight(44)
         grid = self._grid()
         row.setLayout(grid)
-        for col, text in ((2, "GERÄT"), (3, "ART"), (4, "SAMPLERATE"), (5, "ROLLE")):
-            grid.addWidget(_label(text, "colhead"), 0, col)
+        grid.addWidget(_label("GERÄT", "colhead"), 0, 2)
+        for col, text in ((3, "ART"), (4, "SAMPLERATE"), (5, "ROLLE")):
+            self._cell(grid, _label(text, "colhead"), col)
+        for col in (6, 7):
+            self._cell(grid, QWidget(), col)
         return row
 
     def _row(self, k: int, d: devices.Device) -> QFrame:
@@ -434,16 +451,13 @@ class DevicesPage(QWidget):
         if d is self.editing:
             grid.addWidget(self._rename(d), 0, 2)
         else:
-            text = f"<b>{d.name}</b>" + (
-                f" <span style='color:{self.tokens['text2']}'>· {d.description}</span>"
-                if d.description else "")  # fmt: skip
-            name = _label(text)
+            name = _label(f"<b>{d.name}</b>")
             name.setCursor(Qt.CursorShape.IBeamCursor)
             name.setToolTip("Klicken zum Umbenennen")
             name.mousePressEvent = lambda _e, d=d: self.start_rename(d)
             grid.addWidget(name, 0, 2)
-        grid.addWidget(_label(kind(d, infos)), 0, 3)
-        grid.addWidget(_label(rate(d, infos), "mono"), 0, 4)
+        self._cell(grid, _label(kind(d, infos)), 3)
+        self._cell(grid, _label(rate(d, infos), "mono"), 4)
         roles = QHBoxLayout()
         roles.setSpacing(6)
         if k == layout.reference:
@@ -451,26 +465,27 @@ class DevicesPage(QWidget):
         if k == layout.suggested:
             roles.addWidget(_label("Vorschlag", "badgesuggest"))
         roles.addStretch()
-        grid.addLayout(roles, 0, 5)
+        self._cell(grid, roles, 5)
         files = _small_button(f"{fmt.files(len(d.files))} {'▴' if d is self.open else '▾'}")
         files.setProperty("open", "true" if d is self.open else "false")
         files.clicked.connect(lambda: self.toggle_files(d))
-        grid.addWidget(files, 0, 6)
+        self._cell(grid, files, 6)
         more = _more_button()
         more.clicked.connect(lambda: self._device_menu(k, d, more))
-        grid.addWidget(more, 0, 7)
+        self._cell(grid, more, 7)
         return row
 
     def _rename(self, d: devices.Device) -> QWidget:
         box = QWidget()
         line = QHBoxLayout(box)
         line.setContentsMargins(0, 0, 0, 0)
-        name, description = QLineEdit(d.name), QLineEdit(d.description)
-        description.setPlaceholderText("Beschreibung")
+        name = QLineEdit(d.name)
+        name.setMinimumWidth(180)
         ok = _small_button("OK")
         problem = _label("", "problem")
-        for w in (name, description, ok, problem):
-            line.addWidget(w)
+        line.addWidget(name, 1)
+        line.addWidget(ok)
+        line.addWidget(problem)
 
         def check() -> None:
             text = name_problem(name.text(), self.layout_, keep=d)
@@ -479,13 +494,12 @@ class DevicesPage(QWidget):
 
         def done() -> None:
             if not name_problem(name.text(), self.layout_, keep=d):
-                d.name, d.description = name.text().strip(), description.text().strip()
+                d.name = name.text().strip()
                 self.editing = None
                 self.rebuild()
 
         name.textChanged.connect(check)
-        for w in (name, description):
-            w.returnPressed.connect(done)
+        name.returnPressed.connect(done)
         ok.clicked.connect(done)
         name.setFocus()
         name.selectAll()

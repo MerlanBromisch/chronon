@@ -44,7 +44,6 @@ class Device:
     name: str
     clips: list[Clip] = field(default_factory=list)
     is_reference: bool = False
-    description: str = ""
     track_names: dict[str, str] = field(default_factory=dict)  # str(path) -> name
 
     @property
@@ -219,7 +218,6 @@ class Layout:
             Device(
                 d["name"],
                 [Clip([Path(t) for t in c]) for c in d["clips"]],
-                description=d.get("description", ""),
                 track_names=dict(d.get("track_names", {})),
             )
             for d in data["devices"]
@@ -243,7 +241,6 @@ class Layout:
             "devices": [
                 {
                     "name": d.name,
-                    "description": d.description,
                     "clips": [[str(t) for t in c.tracks] for c in d.clips],
                     "track_names": d.track_names,
                 }

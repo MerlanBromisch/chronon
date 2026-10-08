@@ -23,9 +23,7 @@ NOTES = {
     "reference_clock": lambda n: "gleiche Uhr wie die Referenz",
     "measured_via": lambda n: f"gemessen über {_name(n['file'])}",
     "drift_from": lambda n: f"Drift von {_name(n['file'])} übernommen",
-    "linked_via": lambda n: (
-        f"angebunden über {_name(n['file'])} (keine sichere Überlappung mit der Referenz)"
-    ),
+    "linked_via": lambda n: f"gemessen über {_name(n['file'])}",
     "joined": lambda n: "zusammengefügt: " + ", ".join(_name(f) for f in n["files"]),
     "wav_over_2gib": lambda n: "WAV über 2 GiB: manche Programme lesen sie nicht",
     "caf_over_2gib": lambda n: "Als CAF geschrieben: über 2 GiB",

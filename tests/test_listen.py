@@ -187,3 +187,14 @@ def test_without_a_reliable_match_listen_where_both_play(tmp_path):
     start, end = t.span(other)
     lo, hi = max(start, 0.0), min(end, 120.0)
     assert t.suggest(other, 2.0) == pytest.approx((lo + hi) / 2 - 1.0)
+
+
+def test_window_of_an_overview_is_silent_outside_the_file():
+    peaks = np.ones((500, 2), dtype=np.int8)  # 5 s
+    part = listen.window(peaks, -1.0, 2.0)
+    assert len(part) == 300
+    assert not part[:100].any() and part[100:].all()
+    assert (
+        len(listen.window(peaks, 4.0, 6.0)) == 200
+        and not listen.window(peaks, 4.0, 6.0)[100:].any()
+    )

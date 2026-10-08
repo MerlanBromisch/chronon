@@ -20,7 +20,7 @@ load them first (the prototype uses sample data).
 | 02-files-reading | Intermediate state while the files are probed ("23 / 56") |
 | 03-files-loaded | Flat file list: name, duration, sample rate, channels, start time |
 | 04-files-unreadable-dialog | Modal "Datei nicht lesbar" with the ffmpeg message |
-| 05-devices-reference | Device list (rename inline with optional description, reorder by the drag handle, pick the reference; "Vorschlag" marks the suggestion), then reference tracks (nameable), then audition |
+| 05-devices-reference | Device list (rename inline, reorder by the drag handle, pick the reference; "Vorschlag" marks the suggestion), then reference tracks (nameable), then audition |
 | 05a-devices-regroup | A device's files opened: select files, then "In Gerät verschieben …" or "Als neues Gerät abtrennen" (the file menu shows the same two) |
 | 05b-devices-move-dialog | Dialog "Datei verschieben": pick a device or "Neues Gerät" with a name |
 | 05c-devices-merge-dialog | Dialog "Geräte zusammenführen" (row menu "…"), with the name after merging |
@@ -122,8 +122,8 @@ Fonts: IBM Plex Sans (UI) and IBM Plex Mono (numbers, times, paths). Sizes: 22/6
   shows them. Most users only need "synced".
 - Reference choice is prominent (step 2): device first, then its tracks, with an audition
   (waveform, play/pause, −1 min / −10 s / +10 s / +1 min, slider).
-- Devices: names and order are edited in place. Click a name to rename (name + optional
-  description, "OK"); the grip moves a row up (drag and drop in Qt). The order is the lane order
+- Devices: names and order are edited in place. Click a name to rename (a wide name
+  field, "OK"; no description: it ended up nowhere); the grip moves a row up (drag and drop in Qt). The order is the lane order
   in the timeline and export. Files are shown per device on demand ("Dateien"); with 56 files and
   5 devices all devices stay collapsed except the one being edited. Only devices of clips can be
   regrouped or merged; multitrack devices keep their tracks together.
@@ -160,9 +160,29 @@ Decided 2026-10-07 after reviewing revision 1:
    or its number when unnamed (`x32_17_korrigiert.wav`). Board 14's single
    `x32_korrigiert.caf` is sample data only.
 
+Decided 2026-10-08 after the user tried the app on the real musical:
+
+4. **Result timeline (08):** drawn like an editor's: a ruler with major and minor ticks
+   (`h:mm:ss`), a lane per device, every clip a region with its file name in a header strip
+   (parallel tracks: "N Spuren") and its waveform inside; the reference in the accent colour,
+   the others in the `region` colour, an unsure clip dashed. Tooltip: file, span, verdict, drift.
+5. **Waveforms (05, 10):** one column per pixel on a dB scale, peaks as a light outline around
+   a solid core, centre line, cursor; never the coarse bars. While an overview is computed:
+   "Wellenform wird berechnet … N %".
+6. **Hören (10):** the file's whole waveform under the reference's for the same time instead
+   of ±5 s; a click moves the position. No slider there nor in the audition (05).
+7. **Badges:** all badges of a list have one width and height, centred in their row; icons
+   (check, warning, circle) are drawn, not font glyphs. The running step shows a box with a dot.
+8. **No confidence in the app** (result details, Hören): 14 % reads as a failure although it is
+   normal in a room; the badge says whether a file is reliable. A clip measured through another
+   reads "gemessen über X" in the details only.
+9. **Progress:** at most 99 % until the result is in; the export's bar covers writing and
+   checking together.
+10. **Rename (05):** a wide name field, no description.
+
 ## Not designed yet
 
 - Applying the appearance setting live (the row is designed, both themes exist).
 - Drag and drop between devices (the boards use selection and menus; drag is a shortcut).
-- Real waveform data and the audition's playback latency behaviour.
-- Qt specifics (native slider and combo box will differ from the mock-ups).
+- The audition's playback latency behaviour (the user tests it).
+- Qt specifics (the native combo box differs from the mock-ups).

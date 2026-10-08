@@ -403,7 +403,8 @@ class _Work:
     method it first gets the steps, and then every report names its step (``task``), the
     share of that step done (``task_done``) and its device. The whole stays at 0 until
     every step's work is foreseen (``ready``), and never goes back: when a step turns out
-    bigger than foreseen (``grow``), the bar holds still."""
+    bigger than foreseen (``grow``), the rest of the bar stands for the rest of the work, so it
+    slows down instead of holding still at the end."""
 
     def __init__(self, steps: list[Step], progress: Callable[..., None] | None):
         self.steps = {s.id: s for s in steps}
@@ -413,6 +414,7 @@ class _Work:
         self.detailed = hasattr(progress, "plan")
         self.known = False
         self.shown = 0.0
+        self.base = (0.0, 0.0)  # (shown, work done) when the work last grew
         self.what = ""
         self.current = steps[0].id  # the step running in the foreground
         self.lock = threading.Lock()
@@ -427,7 +429,9 @@ class _Work:
         self.known = True
 
     def grow(self, step: str, units: float) -> None:
-        self.foresee(step, units)
+        with self.lock:
+            self.base = (self.shown, sum(self.done.values()))
+            self.total[step] += max(units, 0.0)
 
     def start(self, step: str, what: str) -> None:
         with self.lock:
@@ -453,8 +457,10 @@ class _Work:
             if what is not None:
                 self.what = what
             total = sum(self.total.values())
-            if self.known and total > 0:
-                self.shown = max(self.shown, sum(self.done.values()) / total)
+            base_shown, base_done = self.base
+            if self.known and total > base_done:
+                part = (sum(self.done.values()) - base_done) / (total - base_done)
+                self.shown = max(self.shown, base_shown + (1 - base_shown) * part)
             scale = 1_000_000
             done, whole = round(self.shown * scale), scale
             share = self.done[step] / self.total[step] if self.total[step] else 0.0
@@ -522,7 +528,8 @@ def align_files(
         work.foresee(_device_step(devs, dev), decode[k] + analyse[k])
     if clips and len(refs):
         work.foresee("reference", REF_READ_COST * refs.sources[0].length / refs.sources[0].rate)
-    work.foresee("drift", 1.0)
+    # placing clips is quick, but it is the last step: keep a little of the bar for it
+    work.foresee("drift", max(1.0, 0.02 * sum(work.total.values())))
     work.ready()
     work.finish("read")
 
@@ -697,7 +704,7 @@ def _link(
                 what = f"linking {clip.tracks[0].name} via {track.name}"
                 stage: Callable[[float], None] = lambda frac: None  # noqa: E731
                 if work is not None:
-                    # each try is work nobody foresaw: the step grows, the bar holds still
+                    # each try is work nobody foresaw: the step grows, the bar slows down
                     length = LINK_COST * audio.probe(clip.tracks[0]).duration_s
                     work.grow("drift", length)
                     stage = _stage(work, "drift", length, what)

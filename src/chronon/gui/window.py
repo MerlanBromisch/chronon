@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -16,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chronon.gui import fmt, settings, theme
+from chronon.gui import fmt, settings, texts, theme
 from chronon.gui.audition import Overviews, Player
 from chronon.gui.devices_page import DevicesPage
 from chronon.gui.export_page import ExportPage
@@ -92,10 +94,11 @@ class Window(QMainWindow):
         self.sync = SyncPage(self.project)
         self.sync.changed.connect(self.update_chrome)
         self.sync.finished.connect(lambda: self.show_step(3))
-        self.result = ResultPage(self.project, self.tokens)
+        self.sync.finished.connect(self._prefetch_waves)
+        self.result = ResultPage(self.project, self.tokens, self.overviews)
         self.result.changed.connect(self.update_chrome)
         self.result.other_reference.connect(lambda: self.show_step(1))
-        self.listen = ListenPage(self.project, self.tokens, self.player)
+        self.listen = ListenPage(self.project, self.tokens, self.player, self.overviews)
         self.listen.changed.connect(self.update_chrome)
         self.export = ExportPage(self.project, self.tokens)
         self.export.changed.connect(self.update_chrome)
@@ -174,6 +177,17 @@ class Window(QMainWindow):
         for job in self.findChildren(Job):  # sync / export, maybe still finishing
             job.cancel()
             job.wait(5000)
+
+    def _prefetch_waves(self) -> None:
+        """While the result is read: the waveforms listening needs, in the order it shows
+        the files (reference tracks first), so they are there when it opens."""
+        result, layout = self.project.result, self.project.layout
+        if not result or layout is None:
+            return
+        rows = [r for r in result["files"] if not r.get("is_reference")]
+        order = {"unsure": 0, "wanders": 1, "ok": 2}
+        rows.sort(key=lambda r: order[texts.verdict(r)])
+        self.overviews.prefetch(list(layout.tracks) + [Path(r["file"]) for r in rows])
 
     def set_appearance(self, appearance: str) -> None:
         """Change the theme live: every widget holds this one token dict."""

@@ -338,3 +338,21 @@ def test_progress_follows_the_plan_step_by_step(tmp_path):
     assert whole == sorted(whole) and whole[-1] == 1.0
     after = [f for f, task, *_ in progress.events if task != "read"]
     assert max(b - a for a, b in zip(after, after[1:], strict=False)) < 0.2
+
+
+def test_progress_slows_down_when_the_work_grows_instead_of_standing_at_the_end():
+    shown = []
+    steps = [align.Step("compare:1", "compare", "cam"), align.Step("drift", "drift")]
+    work = align._Work(steps, lambda what, done, total, **task: shown.append(done / total))
+    work.foresee("compare:1", 99.0)
+    work.foresee("drift", 1.0)
+    work.ready()
+    work.start("compare:1", "comparing")
+    work.add("compare:1", 99.0)
+    work.start("drift", "linking")
+    work.grow("drift", 100.0)  # linking a clip: work nobody foresaw, as much again
+    at_grow = shown[-1]
+    work.add("drift", 50.0)
+    assert at_grow < shown[-1] < 1.0  # it moves on, it does not stand at the end
+    work.finish("drift")
+    assert shown == sorted(shown) and shown[-1] == 1.0

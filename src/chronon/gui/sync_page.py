@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
 from chronon.gui import texts
 from chronon.gui.jobs import Job
 from chronon.gui.project import Project
-from chronon.gui.widgets import StepList, banner, card, label
+from chronon.gui.widgets import StepList, banner, card, label, percent
 
 
 def _clock(seconds: float) -> str:
@@ -121,9 +121,9 @@ class SyncPage(QWidget):
                     self.list.set_state(skipped, "done", "0:00")
             self.task, self.task_started = task, now
             self.list.set_state(task, "running")
-        self.percent = round(100 * e.get("done", 0.0))
+        self.percent = percent(e.get("done", 0.0))
         name = next((texts.step(s) for s in self.steps if s["id"] == task), "")
-        self.bar.setValue(round(1000 * e.get("done", 0.0)))
+        self.bar.setValue(10 * self.percent)
         self.number.setText(f"{self.percent} %")
         self.detail.setText(name + _left(e.get("left_s")))
 

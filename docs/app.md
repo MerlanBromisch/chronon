@@ -79,7 +79,8 @@ Version 1 had English sentences in both.
   analysed; its work is credited to its own step, which can start at more than 0), the coarse
   search and the measurement count window by window. `done` stays 0 until the files' lengths
   are read, and never goes back: work nobody foresaw (a further reference track, a clip
-  linked through another) makes it hold still. At most ten events a second, but the first
+  linked through another) slows it down (the rest of the bar stands for the rest of the work).
+  The app shows at most 99 % until the `result` arrives. At most ten events a second, but the first
   event of each task always goes out.
 - `result` (exactly one, last, on success): `files` are the same rows as the report file —
   `analyze`: offset, drift, confidence, `reliable`, windows, `via` / `drift_from` /
@@ -89,7 +90,7 @@ Version 1 had English sentences in both.
   `chronon-sync.json` rows; `correct`: the `chronon-report.json` rows, `timeline` null with
   `--timeline none`. `correct` exits 1 when `failed` > 0.
 - **Devices first:** `chronon devices --json FILE...` → `result` with `layout` (the
-  editable device layout: `devices` in timeline order with `name`, `description`, `clips`
+  editable device layout: `devices` in timeline order with `name`, `clips`
   (lists of parallel tracks), `track_names`; `reference`, `reference_tracks`, `suggested`) and
   `devices` (per device `kind` = tracks / clips / video_clips / file / video, `clips`,
   `tracks`, `files`, `sample_rate`, `channels`, `duration_s`, `has_video`) and `files` (the
@@ -160,8 +161,9 @@ notes of older reports into `{"code": "text", "text": …}`.
    reference track(s) (`-r`). The reference choice is prominent, not hidden in settings: it
    matters more than anything else.
 3. **Sync** — step, percentage, time left; cancel.
-4. **Result** — one row per file / device: offset, drift (ppm), confidence, `wander_ms`, and a
-   clear "no reliable match" state. Re-run with another reference.
+4. **Result** — one row per file / device: offset, drift (ppm), `wander_ms`, and a clear "no
+   reliable match" state (the confidence stays in the protocol: a low share of agreeing windows
+   is normal in a room and read as a failure). Re-run with another reference.
 5. **Listen** — play a short excerpt around a chosen point: reference and file together
    (e.g. reference left, file right, or mixed). Latency does not matter.
 6. **Export** — sync (originals) or correct (corrected audio), WAV / CAF, `--join`, output
@@ -245,21 +247,25 @@ Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python 
 - `devices_page.py`: step 2 (boards 05–05c). `devices.detect` runs on a thread with the infos
   of step 1 (it only reads levels for the suggestion); the page edits the project's
   `devices.Layout` through its methods (`move_device`, `move_files`, `merge`), which keep the
-  reference and the suggestion on their devices. Rename (name + description) in place, reorder
+  reference and the suggestion on their devices. Rename in place, reorder
   by the grip or the row menu, regroup clips (multitrack devices are disabled targets),
   reference device by its radio, reference tracks as chips (double click names one), and the
   audition of a reference track.
-- `audition.py`: `Waveform` (bars of peaks, a cursor, click to seek), `Player` (QtMultimedia,
-  stereo float fed in 8 s pieces from a source function), `Overviews` (`chronon overview` in a
-  job, cached in the settings' cache folder), `Audition` (step 2's player).
+- `audition.py`: `Waveform` (a whole overview, one column per pixel on a dB scale, cursor, click
+  to seek, "being computed" with its share), `Player` (QtMultimedia pulling one continuous
+  stereo float stream that a thread decodes ~12 s ahead from a source function), `Overviews`
+  (`chronon overview` in jobs, two at a time, what is shown first; after a sync the files to
+  listen to are computed ahead into the settings' cache folder), `Audition` (step 2's player).
 - `sync_page.py`: step 3. Saves the layout into the session folder and runs
   `analyze --devices devices.json --save analysis.json --log logs/sync-N.log`; the plan event
   becomes the step list (board 06), cancel kills the job (board 07). Going back to step 2 and on
   without changes shows the result again without measuring.
-- `result_page.py`: step 4. Verdict, a view-only timeline from the result's placements, the
-  details table with German notes (`texts.py`) and verdict badges (README "Verdict badges").
-- `listen_page.py`: step 5. Files to check first, then reliable ones; the reference and the file
-  ±5 s around a position (`listen.Timeline.pair`), played side by side or mixed.
+- `result_page.py`: step 4. Verdict, a view-only timeline from the result's placements drawn
+  like an editor's (ruler, lanes, regions with name and waveform), the details table with
+  German notes (`texts.py`) and verdict badges (README "Verdict badges").
+- `listen_page.py`: step 5. Files to check first, then reliable ones; the file's whole waveform
+  under the reference's for the same time (`listen.window`), played from a position side by side
+  or mixed (`listen.Timeline.pair`).
 - `export_page.py`: step 6. Sync or Korrigiert from the saved analysis (`sync|correct
   --analysis`), with the corrections to the boards (timeline as a format choice); the folder
   of the originals is refused before the run; the outcome lists each file with its check.
