@@ -271,7 +271,8 @@ Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python 
   its events into signals; cancel = kill. The frozen app runs itself with `--worker <command>`.
 - `app.py`: `walk()` drives every step like a user (read, devices, sync, result, listen,
   export); `--selftest FOLDER` runs it without a screen, and the app build
-  (`.github/workflows/app.yml`) runs that on all three platforms.
+  (`.github/workflows/app.yml`) runs that on all three platforms. The build runs on demand
+  ("Run workflow" on a branch) and for `v*` tags, not on every push.
 - Tests: `tests/test_gui.py` (offscreen Qt; CI installs the `gui` extra).
 - Not yet: IBM Plex (not bundled; the system's sans and mono fonts are used), other languages,
   a project file to reopen a session later.

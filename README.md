@@ -33,7 +33,8 @@ uv run chronon-app
 
 Six steps: drop the files, check devices and reference, sync, read the result, listen, export
 (a Final Cut Pro / Logic timeline of the originals, or drift-corrected audio). Builds for macOS,
-Windows and Linux come from the "App build" workflow (download them under its run's artifacts).
+Windows and Linux come from the "App build" workflow: start it under Actions → App build → Run
+workflow (or push a `v*` tag), then download them under the run's artifacts.
 They are not signed: on macOS open the app with right-click → Open the first time, on Windows
 choose "More info → Run anyway".
 
