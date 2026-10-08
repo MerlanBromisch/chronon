@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QPalette
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+)
+from PySide6.QtWidgets import QProxyStyle, QStyle
 
 TOKENS = {
     "dark": {
@@ -208,7 +218,18 @@ QDialog {{ background: {t["panel"]}; }}
 #pathfield {{ font-family: "{mono}"; font-size: 12px; }}
 QLineEdit, QComboBox {{ min-height: 30px; padding: 0 10px; border: 1px solid {t["button_border"]};
     border-radius: 4px; background: {t["input"]}; }}
-QComboBox {{ min-width: 110px; }}
+QComboBox {{ min-width: 110px; padding-right: 28px; }}
+QLineEdit:hover, QComboBox:hover {{ border-color: {t["control_border"]}; }}
+QLineEdit:focus, QComboBox:focus, QComboBox:on {{ border-color: {t["accent"]}; }}
+QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right;
+    width: 26px; border: none; background: transparent; }}
+QComboBox::down-arrow {{ image: url("{chevron(t["text2"])}"); width: 10px; height: 6px; }}
+QComboBox QAbstractItemView {{ background: {t["panel"]}; border: 1px solid {t["card_border"]};
+    border-radius: 4px; padding: 4px; outline: 0; selection-background-color: {t["accent"]};
+    selection-color: {t["on_accent"]}; }}
+QComboBox QAbstractItemView::item {{ min-height: 26px; padding: 0 8px; border-radius: 3px; }}
+QCheckBox, QRadioButton {{ spacing: 8px; background: transparent; }}
+QCheckBox::indicator, QRadioButton::indicator {{ width: 18px; height: 18px; }}
 #monobold {{ font-family: "{mono}"; font-size: 12px; font-weight: 600; }}
 #monotitle {{ font-family: "{mono}"; font-size: 17px; font-weight: 600; }}
 #bigclock {{ font-family: "{mono}"; font-size: 20px; padding: 0 14px; }}
@@ -293,3 +314,92 @@ QPushButton[role="chip"]:checked {{ background: {t["accent"]}; color: {t["on_acc
 #choice {{ border-bottom: 1px solid {t["divider"]}; }}
 #choice:disabled QLabel {{ color: {t["text3"]}; }}
 """
+
+
+class Style(QProxyStyle):
+    """Fusion with Chronon's own check boxes and radio buttons: clear, flat, in the design's
+    colours (Fusion's are faint). ``tokens`` is the window's
+    live token dict, so a theme switch applies at once."""
+
+    def __init__(self, tokens: dict[str, str]):
+        super().__init__("Fusion")
+        self.tokens = tokens
+
+    def drawPrimitive(self, element, option, painter, widget=None):  # noqa: N802 (Qt API)
+        t = self.tokens
+        st = QStyle.StateFlag
+        if element in (QStyle.PrimitiveElement.PE_IndicatorCheckBox,
+                       QStyle.PrimitiveElement.PE_IndicatorRadioButton):  # fmt: skip
+            on = bool(option.state & st.State_On)
+            partly = bool(option.state & st.State_NoChange)
+            hover = bool(option.state & st.State_MouseOver)
+            enabled = bool(option.state & st.State_Enabled)
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            size = min(option.rect.width(), option.rect.height(), 18)
+            box = QRectF(0, 0, size - 2, size - 2)
+            box.moveCenter(QRectF(option.rect).center())
+            accent = QColor(t["accent"] if enabled else t["text3"])
+            radio = element == QStyle.PrimitiveElement.PE_IndicatorRadioButton
+            if on or partly:
+                painter.setPen(QPen(accent, 1))
+                painter.setBrush(accent if not radio else QColor(t["input"]))
+            else:
+                edge = t["accent"] if hover and enabled else t["control_border"]
+                painter.setPen(QPen(QColor(edge), 1.5))
+                painter.setBrush(QColor(t["input"]))
+            if radio:
+                painter.drawEllipse(box)
+                if on:
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(accent)
+                    painter.drawEllipse(box.center(), box.width() * 0.25, box.width() * 0.25)
+            else:
+                painter.drawRoundedRect(box, 4, 4)
+                pen = QPen(QColor(t["on_accent"]), 2, Qt.PenStyle.SolidLine,
+                           Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)  # fmt: skip
+                painter.setPen(pen)
+                w, x0, y0 = box.width(), box.left(), box.top()
+                if on:
+                    path = QPainterPath(QPointF(x0 + 0.22 * w, y0 + 0.52 * w))
+                    path.lineTo(QPointF(x0 + 0.42 * w, y0 + 0.72 * w))
+                    path.lineTo(QPointF(x0 + 0.78 * w, y0 + 0.30 * w))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawPath(path)
+                elif partly:
+                    painter.drawLine(QPointF(x0 + 0.26 * w, y0 + 0.5 * w),
+                                     QPointF(x0 + 0.74 * w, y0 + 0.5 * w))  # fmt: skip
+            painter.restore()
+            return
+        super().drawPrimitive(element, option, painter, widget)
+
+
+def chevron(colour: str) -> str:
+    """A drop-down chevron in ``colour`` as a PNG (and its @2x twin) the style sheet points
+    to; drawn once per colour into the temp folder."""
+    import tempfile
+    from pathlib import Path
+
+    from PySide6.QtGui import QImage
+
+    folder = Path(tempfile.gettempdir()) / "chronon-ui"
+    folder.mkdir(exist_ok=True)
+    base = folder / f"chevron-{colour.lstrip('#')}"
+    for scale, suffix in ((1, ""), (2, "@2x")):
+        path = Path(f"{base}{suffix}.png")
+        if path.exists():
+            continue
+        image = QImage(10 * scale, 6 * scale, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+        p = QPainter(image)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.scale(scale, scale)
+        p.setPen(QPen(QColor(colour), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                      Qt.PenJoinStyle.RoundJoin))  # fmt: skip
+        path_ = QPainterPath(QPointF(1, 1))
+        path_.lineTo(QPointF(5, 5))
+        path_.lineTo(QPointF(9, 1))
+        p.drawPath(path_)
+        p.end()
+        image.save(str(path))
+    return f"{base}.png".replace("\\", "/")

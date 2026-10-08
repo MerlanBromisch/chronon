@@ -29,6 +29,7 @@ from chronon.gui.project import Project
 from chronon.gui.result_page import ResultPage
 from chronon.gui.settings_page import SettingsPage
 from chronon.gui.sync_page import SyncPage
+from chronon.gui.widgets import Icon
 
 STEPS = ["Dateien", "Geräte & Referenz", "Sync", "Ergebnis", "Hören", "Export"]
 NEXT = {k: f"Weiter: {STEPS[k + 1]}" for k in range(len(STEPS) - 1)}
@@ -62,7 +63,7 @@ class Window(QMainWindow):
         for k, label in enumerate(STEPS):
             side.addWidget(self._side_button(str(k + 1), label, k))
         side.addStretch()
-        side.addWidget(self._side_button("⚙", "Einstellungen", SETTINGS))
+        side.addWidget(self._side_button("gear", "Einstellungen", SETTINGS))
 
         # header
         header = QFrame()
@@ -145,7 +146,7 @@ class Window(QMainWindow):
     def _side_button(self, mark: str, text: str, page: int) -> QPushButton:
         """A sidebar row: number box (accent when current) and the step's name."""
         b = QPushButton()
-        box = QLabel(mark)
+        box = QLabel(mark) if mark != "gear" else Icon("gear", 20, margin=3)
         box.setObjectName("stepnumber")
         box.setFixedSize(20, 20)
         box.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -202,7 +203,9 @@ class Window(QMainWindow):
 
     def apply_theme(self) -> None:
         app = QApplication.instance()
-        app.setStyle("Fusion")
+        style = app.style()
+        if not isinstance(style, theme.Style) or style.tokens is not self.tokens:
+            app.setStyle(theme.Style(self.tokens))
         app.setPalette(theme.palette(self.tokens))
         app.setStyleSheet(theme.stylesheet(self.tokens))
 

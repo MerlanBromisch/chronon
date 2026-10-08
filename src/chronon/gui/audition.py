@@ -32,9 +32,9 @@ Source = Callable[[float, float], np.ndarray]  # (start_s, seconds) -> (frames, 
 
 
 class Waveform(QWidget):
-    """A whole track's waveform the way editors draw it: one column per pixel, the peaks as a
-    lighter outline around a solid core (the average level), a centre line and a cursor. A
-    click moves the position (``seek`` 0..1). While the overview is computed it says so."""
+    """A whole track's waveform the way editors draw it: one column per pixel, one filled
+    shape between the lowest and highest peak, a centre line and a cursor. A click moves the
+    position (``seek`` 0..1). While the overview is computed it says so."""
 
     seek = Signal(float)
 
@@ -44,7 +44,7 @@ class Waveform(QWidget):
         self.peaks = np.zeros((0, 2), dtype=np.float32)
         self.cursor: float | None = None
         self.loading: float | None = None  # 0..1 while the overview is computed
-        self._columns: tuple[int, np.ndarray, np.ndarray, np.ndarray] | None = None
+        self._columns: tuple[int, np.ndarray, np.ndarray] | None = None
         self.setMinimumHeight(height)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -75,12 +75,12 @@ class Waveform(QWidget):
     def mouseMoveEvent(self, event):  # noqa: N802 (dragging scrubs)
         self.mousePressEvent(event)
 
-    def _columns_for(self, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Per column: lowest and highest peak, and the average level (the core)."""
+    def _columns_for(self, n: int) -> tuple[np.ndarray, np.ndarray]:
+        """Per column: lowest and highest peak."""
         if self._columns is None or self._columns[0] != n:
-            lo, hi, core = columns(self.peaks, n)
-            self._columns = (n, lo, hi, core)
-        return self._columns[1], self._columns[2], self._columns[3]
+            lo, hi = columns(self.peaks, n)
+            self._columns = (n, lo, hi)
+        return self._columns[1], self._columns[2]
 
     def paintEvent(self, event):  # noqa: N802
         t = self.tokens
@@ -105,25 +105,16 @@ class Waveform(QWidget):
                                   (rect.width() - 2) * self.loading, 2))  # fmt: skip
         elif len(self.peaks):
             n = max(int(inner.width()), 1)
-            lo, hi, core = self._columns_for(n)
+            lo, hi = self._columns_for(n)
             half = inner.height() / 2
             x = inner.left() + np.arange(n) + 0.5
             outline = QPolygonF(
                 [QPointF(a, mid - half * b) for a, b in zip(x, hi, strict=True)]
                 + [QPointF(a, mid - half * b) for a, b in zip(x[::-1], lo[::-1], strict=True)]
             )
-            wave = QColor(t["wave"])
-            light = QColor(wave)
-            light.setAlphaF(0.45)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(light)
+            p.setBrush(QColor(t["wave"]))  # one shape in one colour, like an editor
             p.drawPolygon(outline)
-            body = QPolygonF(
-                [QPointF(a, mid - half * c) for a, c in zip(x, core, strict=True)]
-                + [QPointF(a, mid + half * c) for a, c in zip(x[::-1], core[::-1], strict=True)]
-            )
-            p.setBrush(wave)
-            p.drawPolygon(body)
         if self.cursor is not None and self.loading is None:
             cx = inner.left() + inner.width() * self.cursor
             p.setPen(QPen(QColor(t["accent"]), 1.5))
@@ -134,30 +125,28 @@ class Waveform(QWidget):
 DB_RANGE = 40.0  # the waveform's height covers this many dB below the loudest
 
 
-def columns(peaks: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def columns(peaks: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray]:
     """Peaks (float, -1..1) squeezed or stretched into ``n`` columns: lowest and highest peak
-    per column and the core (the mean level within it), on a dB scale like editors draw it
-    (quiet passages stay visible; a few loud spikes do not flatten the rest)."""
+    per column, on a dB scale like editors draw it (quiet passages stay visible; a few loud
+    spikes do not flatten the rest)."""
     if not len(peaks):
         z = np.zeros(n, dtype=np.float32)
-        return z, z, z
-    level = np.maximum(-peaks[:, 0], peaks[:, 1])
+        return z, z
     if len(peaks) >= n:
         starts = (np.arange(n) * len(peaks)) // n
         lo = np.minimum.reduceat(peaks[:, 0], starts)
         hi = np.maximum.reduceat(peaks[:, 1], starts)
-        core = np.add.reduceat(level, starts) / np.diff(np.append(starts, len(peaks)))
     else:  # fewer peaks than pixels: each covers several columns
         pick = (np.arange(n) * len(peaks)) // n
-        lo, hi, core = peaks[pick, 0], peaks[pick, 1], level[pick]
+        lo, hi = peaks[pick, 0], peaks[pick, 1]
+    level = np.maximum(-peaks[:, 0], peaks[:, 1])
     top = max(float(np.percentile(level, 99.9)), 1e-4)
 
     def scale(x: np.ndarray) -> np.ndarray:
         db = 20 * np.log10(np.maximum(np.abs(x) / top, 1e-9))
         return np.sign(x) * np.clip(1 + db / DB_RANGE, 0.0, 1.0)
 
-    lo, hi, core = scale(lo), scale(hi), scale(core)
-    return lo, hi, np.minimum(core, np.minimum(hi, -lo))
+    return scale(lo), scale(hi)
 
 
 class _Stream(QIODevice):

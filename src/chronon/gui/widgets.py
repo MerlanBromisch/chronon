@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPainterPath, QPalette, QPen
+from PySide6.QtGui import (
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+    QTransform,
+)
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -57,9 +65,9 @@ class Icon(QLabel):
     """A small drawn symbol in the widget's text colour (glyphs like ✓ depend on the font and
     looked like a root sign): check, warn, circle, bang, dot."""
 
-    def __init__(self, shape: str, size: int = 13):
+    def __init__(self, shape: str, size: int = 13, margin: int = 0):
         super().__init__()
-        self.shape = shape
+        self.shape, self.margin = shape, margin
         self.setFixedSize(size, size)
 
     def set_shape(self, shape: str) -> None:
@@ -67,7 +75,9 @@ class Icon(QLabel):
         self.update()
 
     def paintEvent(self, event):  # noqa: N802 (Qt API)
-        paint_icon(self, self.shape, QRectF(self.rect()))
+        super().paintEvent(event)  # a frame from the style sheet, if any
+        m = self.margin
+        paint_icon(self, self.shape, QRectF(self.rect()).adjusted(m, m, -m, -m))
 
 
 def paint_icon(widget: QWidget, shape: str, box: QRectF) -> None:
@@ -103,6 +113,19 @@ def paint_icon(widget: QWidget, shape: str, box: QRectF) -> None:
     elif shape == "bang":
         p.drawLine(at(0.5, 0.16), at(0.5, 0.60))
         p.drawPoint(at(0.5, 0.82))
+    elif shape == "gear":  # eight teeth on a ring, a hole in the middle, filled
+        gear = QPainterPath()
+        gear.addEllipse(at(0.5, 0.5), 0.33 * s, 0.33 * s)
+        for k in range(8):
+            tooth = QPainterPath()
+            tooth.addRect(QRectF(-0.085 * s, -0.48 * s, 0.17 * s, 0.2 * s))
+            turn = QTransform().translate(box.center().x(), box.center().y()).rotate(45 * k)
+            gear = gear.united(turn.map(tooth))
+        hole = QPainterPath()
+        hole.addEllipse(at(0.5, 0.5), 0.13 * s, 0.13 * s)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        p.drawPath(gear.subtracted(hole))
     elif shape == "dot":
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(color)

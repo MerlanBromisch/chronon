@@ -85,8 +85,7 @@ Version 1 had English sentences in both.
 - `result` (exactly one, last, on success): `files` are the same rows as the report file —
   `analyze`: offset, drift, confidence, `reliable`, windows, `via` / `drift_from` /
   `linked_via`, `continues`, `notes`, and `placement` (where the file lands on a timeline of the
-  originals:
-  `position_s`, `duration_s`, `has_video`, `video_error_ms`, `variable_rate`); plus
+  originals: `position_s`, `duration_s`, `has_video`, `video_error_ms`, `variable_rate`); plus
   `frame_rate` of the timeline and `analysis` (the file of `--save`, else null). `sync`: the
   `chronon-sync.json` rows; `correct`: the `chronon-report.json` rows, `timeline` null with
   `--timeline none`. `correct` exits 1 when `failed` > 0.
