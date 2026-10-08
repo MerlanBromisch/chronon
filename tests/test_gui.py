@@ -246,7 +246,9 @@ def test_audition_shows_the_reference_track(app, tmp_path, monkeypatch):
     audition.move_to(75)
     assert audition.pos == 60.0 and audition.time.text() == "0:01:00"
     audition.move_to(12.4)
-    assert audition.slider.value() == round(1000 * 12.4 / 60)
+    assert audition.wave.cursor == pytest.approx(12.4 / 60)
+    audition.wave.seek.emit(0.25)  # a click into the waveform
+    assert audition.pos == pytest.approx(15.0)
     # the next file of the reference device (a clip device: its clips)
     win.devices.set_reference(0)
     assert audition.title.text().startswith("VORHÖREN")
@@ -267,6 +269,15 @@ def test_the_whole_app_from_files_to_export(app, tmp_path, monkeypatch):
 
     # what the steps show on the way
     assert win.result.ready and win.listen.rows and win.export.outcome["failed"] == 0
+    # listening shows the whole file, the reference for the same time; a click moves there
+    listen_ = win.listen
+    start, end = listen_.span
+    assert len(listen_.file_wave.peaks) == pytest.approx((end - start) * 100, abs=2)
+    assert len(listen_.ref_wave.peaks) == pytest.approx((end - start) * 100, abs=2)
+    listen_.file_wave.seek.emit(0.5)
+    assert listen_.pos == pytest.approx((start + end) / 2)
+    listen_.move_to(end + 60)  # stays within the file
+    assert listen_.pos == end
     logs = sorted(p.name for p in (win.project.folder() / "logs").iterdir())
     assert logs == ["export-1.log", "sync-1.log"]
     assert (win.project.folder() / "devices.json").exists()
@@ -387,3 +398,35 @@ def test_playback_is_one_continuous_stream_decoded_ahead(app):
     x = x[x > 0]  # silence where decoding fell behind is allowed, gaps in the audio are not
     assert len(x) == round(9.5 * rate)
     assert np.array_equal(x, np.arange(2 * rate, 2 * rate + len(x), dtype=np.float32))
+
+
+def test_overviews_compute_two_at_a_time_and_what_is_shown_first(app, tmp_path, monkeypatch):
+    from chronon.gui import audition
+
+    monkeypatch.setattr(settings, "cache_dir", lambda: tmp_path / "cache")
+    started = []
+
+    class FakeJob:
+        def __init__(self, args, parent=None):
+            self.path = Path(args[1])
+            self.result, self.progress, self.failed = _Sig(), _Sig(), _Sig()
+
+        def start(self):
+            started.append(self.path.name)
+
+    class _Sig:
+        def connect(self, f):
+            pass
+
+    monkeypatch.setattr(audition, "Job", FakeJob)
+    files = []
+    for name in "abcde":
+        f = tmp_path / f"{name}.wav"
+        f.write_bytes(b"x")
+        files.append(f)
+    o = audition.Overviews()
+    o.prefetch(files[:4])
+    assert started == ["a.wav", "b.wav"]  # two at a time
+    assert o.get(files[4]) is None  # shown now: ahead of the rest
+    o._failed(files[0])
+    assert started == ["a.wav", "b.wav", "e.wav"]

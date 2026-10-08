@@ -11,10 +11,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QIODevice, QObject, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtCore import QIODevice, QObject, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from chronon import audio, listen
 from chronon.gui import fmt, settings
@@ -32,40 +32,55 @@ Source = Callable[[float, float], np.ndarray]  # (start_s, seconds) -> (frames, 
 
 
 class Waveform(QWidget):
-    """Bars of min/max peaks, a cursor; a click moves the position (``seek`` 0..1)."""
+    """A whole track's waveform the way editors draw it: one column per pixel, the peaks as a
+    lighter outline around a solid core (the average level), a centre line and a cursor. A
+    click moves the position (``seek`` 0..1). While the overview is computed it says so."""
 
     seek = Signal(float)
 
-    BAR, GAP = 9, 3
-
-    def __init__(self, tokens: dict[str, str], height: int = 40):
+    def __init__(self, tokens: dict[str, str], height: int = 48):
         super().__init__()
         self.tokens = tokens
         self.peaks = np.zeros((0, 2), dtype=np.float32)
         self.cursor: float | None = None
+        self.loading: float | None = None  # 0..1 while the overview is computed
+        self._columns: tuple[int, np.ndarray, np.ndarray, np.ndarray] | None = None
         self.setMinimumHeight(height)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_peaks(self, peaks: np.ndarray, cursor: float | None = None) -> None:
-        """``peaks`` as (n, 2) floats in -1..1 (or int8 overviews, scaled here)."""
+        """``peaks`` as (n, 2) min / max in -1..1 (or int8 overviews, scaled here)."""
         if peaks.dtype == np.int8:
             peaks = peaks.astype(np.float32) / 127
         self.peaks = peaks
+        self.loading = None
+        self._columns = None
         self.cursor = cursor
         self.update()
 
-    def set_samples(self, x: np.ndarray, cursor: float | None = None) -> None:
-        n = max(len(x) // 400, 1)
-        usable = x[: len(x) // n * n].reshape(-1, n) if len(x) >= n else np.zeros((1, 1))
-        self.set_peaks(np.column_stack([usable.min(axis=1), usable.max(axis=1)]), cursor)
+    def set_loading(self, fraction: float = 0.0) -> None:
+        self.peaks = np.zeros((0, 2), dtype=np.float32)
+        self.loading = fraction
+        self._columns = None
+        self.update()
 
     def set_cursor(self, cursor: float | None) -> None:
         self.cursor = cursor
         self.update()
 
     def mousePressEvent(self, event):  # noqa: N802 (Qt API)
-        if self.width() > 0:
+        if self.width() > 0 and len(self.peaks):
             self.seek.emit(min(max(event.position().x() / self.width(), 0.0), 1.0))
+
+    def mouseMoveEvent(self, event):  # noqa: N802 (dragging scrubs)
+        self.mousePressEvent(event)
+
+    def _columns_for(self, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Per column: lowest and highest peak, and the average level (the core)."""
+        if self._columns is None or self._columns[0] != n:
+            lo, hi, core = columns(self.peaks, n)
+            self._columns = (n, lo, hi, core)
+        return self._columns[1], self._columns[2], self._columns[3]
 
     def paintEvent(self, event):  # noqa: N802
         t = self.tokens
@@ -75,32 +90,74 @@ class Waveform(QWidget):
         p.setPen(QColor(t["card_border"]))
         p.setBrush(QColor(t["input"]))
         p.drawRoundedRect(rect, 4, 4)
-        inner = rect.adjusted(6, 5, -6, -5)
-        bars = max(int(inner.width() // (self.BAR + self.GAP)), 1)
-        if len(self.peaks):
-            level = _levels(self.peaks, bars)
-            top = max(float(level.max()), 1e-3)
+        inner = rect.adjusted(1, 4, -1, -4)
+        mid = inner.center().y()
+        p.setPen(QPen(QColor(t["divider"]), 1))
+        p.drawLine(QPointF(inner.left(), mid), QPointF(inner.right(), mid))
+        if self.loading is not None:
+            p.setPen(QColor(t["text2"]))
+            share = f" {round(100 * self.loading)} %" if self.loading > 0 else ""
+            p.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"Wellenform wird berechnet …{share}")
+            if self.loading > 0:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(t["accent"]))
+                p.drawRect(QRectF(rect.left() + 1, rect.bottom() - 3,
+                                  (rect.width() - 2) * self.loading, 2))  # fmt: skip
+        elif len(self.peaks):
+            n = max(int(inner.width()), 1)
+            lo, hi, core = self._columns_for(n)
+            half = inner.height() / 2
+            x = inner.left() + np.arange(n) + 0.5
+            outline = QPolygonF(
+                [QPointF(a, mid - half * b) for a, b in zip(x, hi, strict=True)]
+                + [QPointF(a, mid - half * b) for a, b in zip(x[::-1], lo[::-1], strict=True)]
+            )
+            wave = QColor(t["wave"])
+            light = QColor(wave)
+            light.setAlphaF(0.45)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(t["wave"]))
-            step = inner.width() / len(level)
-            for k, v in enumerate(level):
-                h = max(2.0, inner.height() * float(v) / top)
-                x = inner.left() + k * step
-                p.drawRect(QRectF(x, inner.center().y() - h / 2, step - self.GAP, h))
-        if self.cursor is not None:
-            x = inner.left() + inner.width() * self.cursor
-            p.setPen(QColor(t["accent"]))
-            p.drawLine(int(x), int(rect.top()) + 1, int(x), int(rect.bottom()) - 1)
+            p.setBrush(light)
+            p.drawPolygon(outline)
+            body = QPolygonF(
+                [QPointF(a, mid - half * c) for a, c in zip(x, core, strict=True)]
+                + [QPointF(a, mid + half * c) for a, c in zip(x[::-1], core[::-1], strict=True)]
+            )
+            p.setBrush(wave)
+            p.drawPolygon(body)
+        if self.cursor is not None and self.loading is None:
+            cx = inner.left() + inner.width() * self.cursor
+            p.setPen(QPen(QColor(t["accent"]), 1.5))
+            p.drawLine(QPointF(cx, rect.top() + 1), QPointF(cx, rect.bottom() - 1))
         p.end()
 
 
-def _levels(peaks: np.ndarray, n: int) -> np.ndarray:
-    """The loudest peak of each of ``n`` equal parts."""
-    level = np.abs(peaks).max(axis=1)
-    if len(level) <= n:
-        return level
-    starts = (np.arange(n) * len(level)) // n
-    return np.maximum.reduceat(level, starts)
+DB_RANGE = 40.0  # the waveform's height covers this many dB below the loudest
+
+
+def columns(peaks: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Peaks (float, -1..1) squeezed or stretched into ``n`` columns: lowest and highest peak
+    per column and the core (the mean level within it), on a dB scale like editors draw it
+    (quiet passages stay visible; a few loud spikes do not flatten the rest)."""
+    if not len(peaks):
+        z = np.zeros(n, dtype=np.float32)
+        return z, z, z
+    level = np.maximum(-peaks[:, 0], peaks[:, 1])
+    if len(peaks) >= n:
+        starts = (np.arange(n) * len(peaks)) // n
+        lo = np.minimum.reduceat(peaks[:, 0], starts)
+        hi = np.maximum.reduceat(peaks[:, 1], starts)
+        core = np.add.reduceat(level, starts) / np.diff(np.append(starts, len(peaks)))
+    else:  # fewer peaks than pixels: each covers several columns
+        pick = (np.arange(n) * len(peaks)) // n
+        lo, hi, core = peaks[pick, 0], peaks[pick, 1], level[pick]
+    top = max(float(np.percentile(level, 99.9)), 1e-4)
+
+    def scale(x: np.ndarray) -> np.ndarray:
+        db = 20 * np.log10(np.maximum(np.abs(x) / top, 1e-9))
+        return np.sign(x) * np.clip(1 + db / DB_RANGE, 0.0, 1.0)
+
+    lo, hi, core = scale(lo), scale(hi), scale(core)
+    return lo, hi, np.minimum(core, np.minimum(hi, -lo))
 
 
 class _Stream(QIODevice):
@@ -254,23 +311,35 @@ class Player(QObject):
 
 class Overviews(QObject):
     """Whole-track overviews: from the disk cache, else computed by ``chronon overview``
-    in a job (a long track or a video takes a while)."""
+    in a job (a long track or a video takes a while). At most ``RUNNING`` jobs at once: what
+    is shown now first, files computed ahead (``prefetch``) when nothing else waits; those go
+    to the disk cache only, not into memory."""
 
     ready = Signal(object, object)  # path, peaks (int8 array)
+    progress = Signal(object, float)  # path, share computed
+
+    RUNNING = 2
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self.memory: dict[Path, np.ndarray] = {}
         self.jobs: dict[Path, Job] = {}
+        self.wanted: list[Path] = []  # waiting to be computed for the screen, newest first
+        self.ahead: list[Path] = []  # waiting to be computed ahead
+        self.asked: set[Path] = set()  # shown once computed
+
+    def _cached(self, path: Path) -> Path | None:
+        try:
+            return listen.overview_path(path, settings.cache_dir())
+        except OSError:
+            return None
 
     def get(self, path: Path) -> np.ndarray | None:
-        """The overview if known (or cached on disk); else start computing it."""
+        """The overview if known (or cached on disk); else compute it, before anything else."""
         if path in self.memory:
             return self.memory[path]
-        cache = settings.cache_dir()
-        try:
-            cached = listen.overview_path(path, cache)
-        except OSError:
+        cached = self._cached(path)
+        if cached is None:
             return None
         if cached.exists():
             try:
@@ -278,21 +347,54 @@ class Overviews(QObject):
                 return self.memory[path]
             except (OSError, ValueError):
                 pass
+        self.asked.add(path)
+        if path in self.ahead:
+            self.ahead.remove(path)
         if path not in self.jobs:
-            job = Job(["overview", str(path), "--cache", str(cache)], parent=self)
+            if path in self.wanted:
+                self.wanted.remove(path)
+            self.wanted.insert(0, path)
+            self._next()
+        return None
+
+    def prefetch(self, paths: list[Path]) -> None:
+        """Compute these when nothing else waits, so they show at once later."""
+        for path in paths:
+            cached = self._cached(path)
+            known = path in self.memory or path in self.ahead or path in self.jobs
+            if cached is not None and not cached.exists() and not known:
+                self.ahead.append(path)
+        self._next()
+
+    def _next(self) -> None:
+        while len(self.jobs) < self.RUNNING and (self.wanted or self.ahead):
+            path = (self.wanted or self.ahead).pop(0)
+            if path in self.jobs:
+                continue
+            job = Job(["overview", str(path), "--cache", str(settings.cache_dir())], parent=self)
             job.result.connect(lambda e, p=path: self._done(p, e))
-            job.failed.connect(lambda e, p=path: self.jobs.pop(p, None))
+            job.progress.connect(lambda e, p=path: self.progress.emit(p, e.get("done", 0.0)))
+            job.failed.connect(lambda e, p=path: self._failed(p))
             self.jobs[path] = job
             job.start()
-        return None
 
     def _done(self, path: Path, event: dict) -> None:
         self.jobs.pop(path, None)
-        row = event["files"][0]
-        self.memory[path] = np.load(row["overview"])
-        self.ready.emit(path, self.memory[path])
+        if path in self.asked:  # computed ahead only: it waits in the disk cache
+            self.asked.discard(path)
+            self.memory[path] = np.load(event["files"][0]["overview"])
+            self.ready.emit(path, self.memory[path])
+        self._next()
+
+    def _failed(self, path: Path) -> None:
+        self.jobs.pop(path, None)
+        self.asked.discard(path)
+        self._next()
 
     def stop(self) -> None:
+        self.wanted.clear()
+        self.ahead.clear()
+        self.asked.clear()
         for job in list(self.jobs.values()):
             job.cancel()
             job.wait(5000)
@@ -307,7 +409,8 @@ def _button(text: str, role: str = "") -> QPushButton:
 
 
 class Audition(QWidget):
-    """'Vorhören': one track's overview, play from a position, jump, slider (board 05)."""
+    """'Vorhören': one track's whole waveform (click to move), play from a position, jump
+    (board 05; no slider: the waveform is the overview)."""
 
     def __init__(self, tokens: dict[str, str], overviews: Overviews, player: Player):
         super().__init__()
@@ -321,15 +424,12 @@ class Audition(QWidget):
         self.prev, self.next = _button("‹", "small"), _button("›", "small")
         self.prev.clicked.connect(lambda: self.show_track(self.index - 1))
         self.next.clicked.connect(lambda: self.show_track(self.index + 1))
-        self.wave = Waveform(tokens, 40)
+        self.wave = Waveform(tokens, 56)
         self.wave.seek.connect(lambda f: self.move_to(f * self.duration))
         self.play = _button("▶  Play", "primary")
         self.play.clicked.connect(self.toggle)
         self.time = QLabel("0:00:00")
         self.time.setObjectName("bigtime")
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 1000)
-        self.slider.sliderMoved.connect(lambda v: self.move_to(v / 1000 * self.duration))
         self.total = QLabel("")
         self.total.setObjectName("mono")
         head = QHBoxLayout()
@@ -348,8 +448,7 @@ class Audition(QWidget):
             b = _button(text)
             b.clicked.connect(lambda _c=False, d=delta: self.move_to(self.pos + d))
             controls.addWidget(b)
-        controls.addSpacing(12)
-        controls.addWidget(self.slider, 1)
+        controls.addStretch()
         controls.addWidget(self.total)
         box = QVBoxLayout(self)
         box.setContentsMargins(0, 0, 0, 0)
@@ -358,6 +457,9 @@ class Audition(QWidget):
         box.addWidget(self.wave)
         box.addLayout(controls)
         overviews.ready.connect(self._overview)
+        overviews.progress.connect(
+            lambda path, share: path == self.path and self.wave.set_loading(share)
+        )
         player.position.connect(self._playing_at)
         player.playing_changed.connect(
             lambda on: self.play.setText("❚❚  Pause" if on else "▶  Play")
@@ -388,7 +490,10 @@ class Audition(QWidget):
         if not keep_position:
             self.pos = min(self.pos, self.duration)
         peaks = self.overviews.get(path)
-        self.wave.set_peaks(peaks if peaks is not None else np.zeros((0, 2), np.float32))
+        if peaks is None:
+            self.wave.set_loading()
+        else:
+            self.wave.set_peaks(peaks)
         self._show_position()
 
     @property
@@ -410,8 +515,6 @@ class Audition(QWidget):
 
     def _show_position(self) -> None:
         self.time.setText(fmt.duration(self.pos))
-        if not self.slider.isSliderDown():
-            self.slider.setValue(round(1000 * (self._fraction() or 0)))
         self.wave.set_cursor(self._fraction())
 
     def toggle(self) -> None:

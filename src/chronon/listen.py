@@ -202,3 +202,14 @@ def reduce(peaks: np.ndarray, width: int) -> np.ndarray:
     low = np.minimum.reduceat(peaks[:, 0], starts)
     high = np.maximum.reduceat(peaks[:, 1], starts)
     return np.column_stack([low, high]).astype(np.float32) / 127
+
+
+def window(peaks: np.ndarray, start_s: float, end_s: float) -> np.ndarray:
+    """The part of an overview from ``start_s`` to ``end_s`` (file time), silent (zeros) where
+    the file has no audio, so it lines up with another file's whole overview."""
+    first, last = round(start_s * PEAKS_PER_S), round(end_s * PEAKS_PER_S)
+    out = np.zeros((max(last - first, 0), 2), dtype=peaks.dtype)
+    a, b = max(first, 0), min(last, len(peaks))
+    if b > a:
+        out[a - first : b - first] = peaks[a:b]
+    return out

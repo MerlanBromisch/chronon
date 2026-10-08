@@ -58,8 +58,10 @@ def walk(win: Window, folder: str | Path, out: Path, timeout: float = STEP_TIMEO
     wait(lambda: win.step == 3, "the result page")
 
     win.go_on()  # Hören
-    if win.listen.current is None or not len(win.listen.ref_wave.peaks):
-        raise SelftestError("listen: no file or no waveform")
+    if win.listen.current is None:
+        raise SelftestError("listen: no file")
+    waves = (win.listen.ref_wave, win.listen.file_wave)
+    wait(lambda: all(len(w.peaks) for w in waves), "the waveforms")  # overviews, from jobs
     seen["listen"] = win.listen.name.text()
 
     win.go_on()  # Export

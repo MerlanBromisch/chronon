@@ -1,31 +1,28 @@
-"""Step 5, Hören: every file with its verdict; reference and file around a position, played
-side by side or mixed (board 10). Files that need checking come first."""
+"""Step 5, Hören: every file with its verdict; the whole file's waveform under the reference's
+for the same time, played side by side or mixed from a position (board 10, with the whole file
+instead of ±5 s and no slider). Files that need checking come first."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
 from chronon import analysis, audio, listen
 from chronon.gui import fmt, texts
-from chronon.gui.audition import RATE, Player, Waveform
+from chronon.gui.audition import RATE, Overviews, Player, Waveform
 from chronon.gui.project import Project
 from chronon.gui.result_page import hint
 from chronon.gui.widgets import Segmented, badge, button, card, label
-
-AROUND_S = 5.0  # the waveforms show this much on both sides of the position
-VIEW_RATE = 8_000  # excerpts for the waveforms
 
 
 class FileItem(QWidget):
@@ -44,14 +41,17 @@ class FileItem(QWidget):
 class ListenPage(QWidget):
     changed = Signal()
 
-    def __init__(self, project: Project, tokens: dict[str, str], player: Player):
+    def __init__(
+        self, project: Project, tokens: dict[str, str], player: Player, overviews: Overviews
+    ):
         super().__init__()
         self.project, self.tokens, self.player = project, tokens, player
+        self.overviews = overviews
+        self.span = (0.0, 0.0)  # the current file in project time
         self.timeline: listen.Timeline | None = None
         self.rows: list[dict] = []
         self.current: dict | None = None
         self.pos = 0.0  # project (timeline) time
-        self.total = 0.0
         self.loaded_for = ""
 
         # left: the files
@@ -85,10 +85,10 @@ class ListenPage(QWidget):
 
         waves, waves_box = card()
         line = QHBoxLayout()
-        self.around = label("", "section")
-        line.addWidget(self.around)
+        line.addWidget(label("WELLENFORM · GANZE DATEI", "section"))
         line.addStretch()
-        line.addWidget(label("±5 s um die Position", "muted"))
+        self.span_label = label("", "muted")
+        line.addWidget(self.span_label)
         waves_box.addLayout(line)
         grid = QGridLayout()
         grid.setColumnMinimumWidth(0, 100)
@@ -102,16 +102,7 @@ class ListenPage(QWidget):
         grid.addWidget(self.file_wave, 1, 1)
         waves_box.addLayout(grid)
         for w in (self.ref_wave, self.file_wave):
-            w.seek.connect(lambda f: self.move_to(self.pos + (f - 0.5) * 2 * AROUND_S))
-
-        position, pos_box = card()
-        pos_box.addWidget(label("POSITION IM PROJEKT", "section"))
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 1000)
-        self.slider.sliderMoved.connect(lambda v: self.move_to(v / 1000 * self.total, later=True))
-        pos_box.addWidget(self.slider)
-        self.ticks = QHBoxLayout()
-        pos_box.addLayout(self.ticks)
+            w.seek.connect(lambda f: self.move_to(self.span[0] + f * (self.span[1] - self.span[0])))
         controls = QHBoxLayout()
         for text, delta in (("−1 min", -60), ("−10 s", -10)):
             b = button(text)
@@ -124,7 +115,9 @@ class ListenPage(QWidget):
             b.clicked.connect(lambda _c=False, d=delta: self.move_to(self.pos + d))
             controls.addWidget(b)
         controls.addStretch()
-        pos_box.addLayout(controls)
+        waves_box.addLayout(controls)
+        overviews.ready.connect(lambda _path, _peaks: self._show_waves())
+        overviews.progress.connect(self._loading)
 
         playback, play_box = card()
         play_box.addWidget(label("WIEDERGABE", "section"))
@@ -141,7 +134,7 @@ class ListenPage(QWidget):
 
         right = QVBoxLayout()
         right.setSpacing(14)
-        for w in (top, waves, position, playback):
+        for w in (top, waves, playback):
             right.addWidget(w)
         right.addWidget(label(
             "Klingt es wie ein einziger Ton, liegt die Datei richtig. "
@@ -160,10 +153,6 @@ class ListenPage(QWidget):
         column.addWidget(self.empty)
         column.addWidget(self.body)
 
-        self.refresh = QTimer(self)
-        self.refresh.setSingleShot(True)
-        self.refresh.setInterval(120)
-        self.refresh.timeout.connect(self._show_waves)
         player.position.connect(self._playing_at)
         player.playing_changed.connect(
             lambda on: self.play_button.setText("❚❚  Pause" if on else "▶  Play")
@@ -192,10 +181,6 @@ class ListenPage(QWidget):
         rows = [r for r in self.project.result["files"] if not r.get("is_reference")]
         order = {"unsure": 0, "wanders": 1, "ok": 2}
         self.rows = sorted(rows, key=lambda r: order[texts.verdict(r)])
-        self.total = max(
-            (self.timeline.span(p)[1] - self.timeline.zero for p in self.timeline.entries),
-            default=0.0,
-        )
         self.list.clear()
         check = [r for r in self.rows if texts.verdict(r) != "ok"]
         self.count.setText(fmt.files(len(self.rows)).upper())
@@ -213,20 +198,9 @@ class ListenPage(QWidget):
                 item.setSizeHint(widget.sizeHint())
                 self.list.addItem(item)
                 self.list.setItemWidget(item, widget)
-        self._ticks()
         first = next(k for k in range(self.list.count())
                      if self.list.item(k).data(Qt.ItemDataRole.UserRole))  # fmt: skip
         self.list.setCurrentRow(first)
-
-    def _ticks(self) -> None:
-        while self.ticks.count():
-            item = self.ticks.takeAt(0)
-            if item.widget() is not None:
-                item.widget().setParent(None)
-        for k in range(5):
-            if k:
-                self.ticks.addStretch()
-            self.ticks.addWidget(label(fmt.duration(self.total * k / 4), "mono"))
 
     def _picked(self, k: int) -> None:
         item = self.list.item(k)
@@ -248,35 +222,66 @@ class ListenPage(QWidget):
         self.file_label.setText(path.stem)
         start, end = self.timeline.span(path)
         zero = self.timeline.zero
-        if not start - zero <= self.pos <= end - zero:
+        self.span = (start - zero, end - zero)
+        self.span_label.setText(f"{fmt.duration(self.span[0])} – {fmt.duration(self.span[1])}")
+        if not self.span[0] <= self.pos <= self.span[1]:
             self.pos = self.timeline.suggest(path, 0.0) - zero
+        self._show_waves()
         self.move_to(self.pos)
 
     # --- position ---------------------------------------------------------------------
-    def move_to(self, seconds: float, later: bool = False) -> None:
-        self.pos = min(max(seconds, 0.0), self.total)
+    def move_to(self, seconds: float) -> None:
+        """A project time within the current file."""
+        self.pos = min(max(seconds, self.span[0]), self.span[1])
         self.time.setText(fmt.duration(self.pos))
-        self.around.setText(f"WELLENFORM UM {fmt.duration(self.pos)}")
-        if not self.slider.isSliderDown() and self.total:
-            self.slider.setValue(round(1000 * self.pos / self.total))
-        if self.player.playing and not later:
+        self._show_cursor()
+        if self.player.playing:
             self.play()
-        if later:
-            self.refresh.start()
-        else:
-            self._show_waves()
+
+    def _show_cursor(self) -> None:
+        length = self.span[1] - self.span[0]
+        cursor = (self.pos - self.span[0]) / length if length > 0 else None
+        self.ref_wave.set_cursor(cursor)
+        self.file_wave.set_cursor(cursor)
 
     def _pair(self, start: float, seconds: float, rate: int = RATE) -> np.ndarray:
         """Reference (left) and the file (right) from project time ``start``."""
         assert self.timeline is not None and self.current is not None
         return self.timeline.pair(self.current["file"], start + self.timeline.zero, seconds, rate)
 
+    def _waves(self) -> tuple[Path, Path] | None:
+        if self.current is None or self.timeline is None:
+            return None
+        path = Path(self.current["file"])
+        return path, self.timeline.result(path).reference
+
     def _show_waves(self) -> None:
-        if self.current is None:
+        """The file's whole overview, and the reference's for the same time (silent where the
+        reference has no audio); 'being computed' until an overview is there."""
+        paths = self._waves()
+        if paths is None:
             return
-        pair = self._pair(self.pos - AROUND_S, 2 * AROUND_S, VIEW_RATE)
-        self.ref_wave.set_samples(pair[:, 0], 0.5)
-        self.file_wave.set_samples(pair[:, 1], 0.5)
+        path, ref = paths
+        assert self.timeline is not None
+        zero = self.timeline.zero
+        file_peaks, ref_peaks = self.overviews.get(path), self.overviews.get(ref)
+        if file_peaks is None:
+            self.file_wave.set_loading()
+        else:
+            self.file_wave.set_peaks(file_peaks)
+        if ref_peaks is None:
+            self.ref_wave.set_loading()
+        else:
+            ref_t = [self.timeline.file_time(ref, t + zero) for t in self.span]
+            self.ref_wave.set_peaks(listen.window(ref_peaks, *ref_t))
+        self._show_cursor()
+
+    def _loading(self, path: Path, share: float) -> None:
+        paths = self._waves()
+        if paths is not None and path == paths[0]:
+            self.file_wave.set_loading(share)
+        if paths is not None and path == paths[1]:
+            self.ref_wave.set_loading(share)
 
     # --- playback ---------------------------------------------------------------------
     def toggle(self) -> None:
@@ -297,14 +302,11 @@ class ListenPage(QWidget):
                 return np.column_stack([mono, mono])
             return pair
 
-        if not self.player.play(source, self.pos, self.total):
+        if not self.player.play(source, self.pos, self.span[1]):
             self.play_button.setText("Keine Audioausgabe")
 
     def _playing_at(self, seconds: float) -> None:
         if self.isVisible():
             self.pos = seconds
             self.time.setText(fmt.duration(seconds))
-            self.around.setText(f"WELLENFORM UM {fmt.duration(seconds)}")
-            if self.total:
-                self.slider.setValue(round(1000 * seconds / self.total))
-            self.refresh.start()
+            self._show_cursor()
