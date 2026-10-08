@@ -1,7 +1,7 @@
 name: App build
 
 # Builds on demand ("Run workflow", any branch: the apps as artifacts for 14 days) and for a
-# version tag (v1.0.0, v1.0.0-rc1): then the three apps also go out as a GitHub Release.
+# version tag (v1.0.0, v1.0.0-beta.1): then the three apps also go out as a GitHub Release.
 on:
   workflow_dispatch:
   push:
@@ -89,7 +89,7 @@ jobs:
             mv "artifacts/Chronon-$os/Chronon.zip" "Chronon-$TAG-$os.zip"
           done
           pre=""
-          case "$TAG" in *-*) pre="--prerelease" ;; esac  # v1.0.0-rc1: a release candidate
+          case "$TAG" in *-*) pre="--prerelease" ;; esac  # v1.0.0-beta.1: a pre-release
           gh release create "$TAG" Chronon-"$TAG"-*.zip --repo "$GITHUB_REPOSITORY" \
             --title "Chronon $TAG" $pre --generate-notes \
             --notes "Download the zip for your system and unpack it. The apps are not signed: see the README (Install) for opening them the first time."

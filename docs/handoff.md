@@ -5,7 +5,7 @@ Read `CLAUDE.md`, `ROADMAP.md`, `docs/app.md` and `docs/design/gaps.md` first. U
 this file when it is out of date.
 
 ## Where things stand
-- `main` holds everything merged; version 1.0.0rc1 (release candidate). The user tests the app
+- `main` holds everything merged; version 1.0.0b1 (beta). The user tests the app
   in real use (`~/Applications/Chronon.app` on their Mac, a CI build of main).
 - **Core** (Python, `src/chronon/`):
   - `chronon devices` detects devices before a reference exists and suggests one; the result is
@@ -49,7 +49,7 @@ this file when it is out of date.
    it in one pass (one PR). Fix their findings first.
 2. **App icon:** drafts A–E (a clock, in the app's colours) in `~/Documents/Chronon Test/
    Icon-Entwürfe/`; once the user picks one, make `packaging/icon/Chronon.icns` and `.ico`.
-3. **Release:** when the user says so, tag `v1.0.0-rc1` on main (the release job is untested
+3. **Release:** when the user says so, tag `v1.0.0-beta.1` on main (the release job is untested
    until the first tag; check the run and the release page).
 4. Later, only with a reason: #34 (save and reopen a project), bundle IBM Plex, #5, #7, #8,
    #11, #15.

@@ -2,7 +2,7 @@
 
 **Automatic waveform-based sync for multi-device recordings — with clock drift correction.**
 
-> Status: release candidate 1.0.0-rc1. The desktop app and the command line measure, place and
+> Status: beta 1.0.0-beta.1. The desktop app and the command line measure, place and
 > correct recordings and write a Final Cut Pro / Logic timeline; tested on a 4 h musical (56
 > files from two desks, a Zoom recorder and two cameras) and an interview.
 
@@ -162,7 +162,7 @@ and clock drift. Presets: `basic`, `drift`, `multiclip`, `music`. Design and dec
 
 **Releases:** the "App build" workflow builds and self-tests the apps for all three systems
 (Actions → App build → Run workflow: download them under the run's artifacts). Pushing a tag
-`vX.Y.Z` (or `vX.Y.Z-rcN`, a pre-release) also publishes them as a GitHub Release.
+`vX.Y.Z` (or `vX.Y.Z-beta.N`, a pre-release) also publishes them as a GitHub Release.
 
 ## Name
 

@@ -63,7 +63,7 @@ Concept and decisions: [docs/app.md](docs/app.md). Python + PySide6, jobs in a c
 - [x] The six steps: files, devices and reference, sync with progress, result (timeline and
   details), listening (reference and file together), export (Sync / Korrigiert)
 - [x] Settings (appearance, cache, protocols), the macOS menu bar, playback without dropouts
-- [x] Release candidate 1.0.0-rc1: versioned builds; a `v*` tag publishes a GitHub Release
+- [x] Beta 1.0.0-beta.1: versioned builds; a `v*` tag publishes a GitHub Release
 - [ ] Save a project and open it again — #34
 - [ ] Later: manual correction of wrong matches
 - [ ] Later, only on demand: signed builds, update hint

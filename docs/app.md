@@ -176,7 +176,7 @@ notes of older reports into `{"code": "text", "text": …}`.
   `.zip` per system. `packaging/build.sh` writes the version (`chronon.__version__`) and the
   bundle id `io.github.merlanbromisch.chronon` into the Mac app's Info.plist and signs it ad
   hoc; an icon in `packaging/icon/` (`Chronon.icns`, `Chronon.ico`) is used when present.
-- Releases: a tag `vX.Y.Z` (`vX.Y.Z-rcN` = pre-release) builds, self-tests and publishes the
+- Releases: a tag `vX.Y.Z` (`vX.Y.Z-beta.N` = pre-release) builds, self-tests and publishes the
   three zips as a GitHub Release (`.github/workflows/app.yml`, job `release`).
 - ffmpeg: the static executables, LGPL on Windows / Linux, GPL on macOS (no LGPL download
   exists for arm64; see the spike's findings below).
