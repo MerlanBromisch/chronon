@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QLibraryInfo, QTranslator
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from chronon.gui import menus
@@ -106,6 +107,7 @@ def run(argv: list[str]) -> int:
     menus.name_the_app("Chronon")  # before the app starts: macOS reads it once
     app = QApplication(sys.argv)
     app.setApplicationName("Chronon")
+    app.setWindowIcon(QIcon(str(Path(__file__).with_name("icon.png"))))  # Windows, Linux
     german = QTranslator(app)  # Qt's own words (menu roles, dialogs) in German
     if german.load("qtbase_de", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
         app.installTranslator(german)

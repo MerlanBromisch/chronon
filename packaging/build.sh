@@ -10,6 +10,7 @@ esac
 args=()
 for f in packaging/bin/*; do args+=(--add-binary "$f${sep}bin"); done
 if [ -f "$icon" ]; then args+=(--icon "$icon"); fi
+args+=(--add-data "src/chronon/gui/icon.png${sep}chronon/gui")  # the window icon
 uv run --extra gui --group build pyinstaller --noconfirm --clean --windowed \
   --name Chronon --distpath dist --workpath build \
   --osx-bundle-identifier io.github.merlanbromisch.chronon \
