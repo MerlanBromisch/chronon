@@ -295,7 +295,7 @@ QSlider::handle:horizontal {{ background: {t["accent"]}; width: 12px; margin: -7
 #tablehead {{ background: {t["table_header"]}; border-bottom: 1px solid {t["divider"]};
     border-top-left-radius: 4px; border-top-right-radius: 4px; }}
 #devicerow {{ background: {t["panel"]}; border-bottom: 1px solid {t["divider"]}; }}
-#devicerow[reference="true"] {{ background: {_mix(t["accent"], t["panel"], 0.08)}; }}
+#devicerow[selected="true"] {{ background: {_mix(t["accent"], t["panel"], 0.08)}; }}
 #handle {{ color: {t["text3"]}; font-size: 16px; }}
 #badgeref {{ background: {t["accent"]}; color: {t["on_accent"]}; border-radius: 4px;
     padding: 3px 9px; font-size: 12px; font-weight: 600; }}
