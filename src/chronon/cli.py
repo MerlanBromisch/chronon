@@ -417,6 +417,7 @@ def _analysis_row(path: str, r: align.FileResult, several_refs: bool) -> dict:
         "via": _str(r.via),
         "drift_from": _str(r.drift_from),
         "linked_via": _str(r.linked_via),
+        "continues": _str(r.continues),
         "notes": ([] if r.is_reference else _notes(a, via)) + correct.result_notes(r),
     }
 

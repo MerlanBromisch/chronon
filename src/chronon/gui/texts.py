@@ -24,6 +24,7 @@ NOTES = {
     "measured_via": lambda n: f"gemessen über {_name(n['file'])}",
     "drift_from": lambda n: f"Drift von {_name(n['file'])} übernommen",
     "linked_via": lambda n: f"gemessen über {_name(n['file'])}",
+    "continues": lambda n: f"schließt lückenlos an {_name(n['file'])} an",
     "joined": lambda n: "zusammengefügt: " + ", ".join(_name(f) for f in n["files"]),
     "wav_over_2gib": lambda n: "WAV über 2 GiB: manche Programme lesen sie nicht",
     "caf_over_2gib": lambda n: "Als CAF geschrieben: über 2 GiB",

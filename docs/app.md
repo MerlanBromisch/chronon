@@ -84,7 +84,8 @@ Version 1 had English sentences in both.
   event of each task always goes out.
 - `result` (exactly one, last, on success): `files` are the same rows as the report file —
   `analyze`: offset, drift, confidence, `reliable`, windows, `via` / `drift_from` /
-  `linked_via`, `notes`, and `placement` (where the file lands on a timeline of the originals:
+  `linked_via`, `continues`, `notes`, and `placement` (where the file lands on a timeline of the
+  originals:
   `position_s`, `duration_s`, `has_video`, `video_error_ms`, `variable_rate`); plus
   `frame_rate` of the timeline and `analysis` (the file of `--save`, else null). `sync`: the
   `chronon-sync.json` rows; `correct`: the `chronon-report.json` rows, `timeline` null with
@@ -118,6 +119,7 @@ Version 1 had English sentences in both.
   | `measured_via` | `file` | parallel track whose measurement this file shares |
   | `drift_from` | `file` | clip too short / weak: drift borrowed from this sibling clip |
   | `linked_via` | `file` | no reliable overlap with the reference; placed through this file |
+  | `continues` | `file` | one take the recorder split into files: placed right after this file |
   | `joined` | `files` | `--join`: these clips in one output |
   | `wav_over_2gib` | | WAV over 2 GiB: a few programs may not read it |
   | `caf_over_2gib` | | written as CAF because it is over 2 GiB |
