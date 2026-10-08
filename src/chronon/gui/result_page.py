@@ -247,10 +247,10 @@ class ResultPage(QWidget):
         grid.setContentsMargins(16, 10, 16, 10)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(8)
-        heads = ["GERÄT / DATEI", "START", "DRIFT", "URTEIL", "KONF.", "HINWEIS"]
+        heads = ["GERÄT / DATEI", "START", "DRIFT", "URTEIL", "HINWEIS"]
         for col, text in enumerate(heads):
             grid.addWidget(label(text, "colhead"), 0, col)
-        grid.setColumnStretch(5, 1)
+        grid.setColumnStretch(4, 1)
         layout = self.project.layout
         ref = layout.devices[layout.reference]
         row = 1
@@ -260,8 +260,7 @@ class ResultPage(QWidget):
                 grid.addWidget(label("–", "mono"), row, 1)
                 grid.addWidget(label("Referenz", "mono"), row, 2)
                 grid.addWidget(badge("ref", "Referenz"), row, 3, LEFT_MIDDLE)
-                grid.addWidget(label("–"), row, 4)
-                grid.addWidget(label(self._reference_text().split(" · ", 1)[1], wrap=True), row, 5)
+                grid.addWidget(label(self._reference_text().split(" · ", 1)[1], wrap=True), row, 4)
                 row += 1
             for r in by_device.get(d.name, []):
                 if d is ref and Path(r["file"]) in layout.tracks:
@@ -270,8 +269,7 @@ class ResultPage(QWidget):
                 grid.addWidget(label(clock_ms(r["placement"]["position_s"]), "mono"), row, 1)
                 grid.addWidget(label(ppm(r["drift_ppm"]), "mono"), row, 2)
                 grid.addWidget(badge(texts.verdict(r)), row, 3, LEFT_MIDDLE)
-                grid.addWidget(label(f"{round(100 * r['confidence'])} %"), row, 4)
-                grid.addWidget(label(hint(r), wrap=True), row, 5)
+                grid.addWidget(label(hint(r), wrap=True), row, 4)
                 row += 1
         return frame
 
@@ -280,10 +278,11 @@ class ResultPage(QWidget):
         return self.project.synced_now
 
 
-def hint(row: dict) -> str:
-    """The notes of a result row in German, plus how exactly a video lands."""
+def hint(row: dict, links: bool = True) -> str:
+    """The notes of a result row in German, plus how exactly a video lands; without the clip
+    it was measured through when ``links`` is false (listening: the badge says enough)."""
     # the badge says "kein sicherer Treffer"; which desk track matched is detail for the log
-    skip = ("no_reliable_match", "matched_track")
+    skip = ("no_reliable_match", "matched_track") + (() if links else ("linked_via",))
     parts = [texts.note(n) for n in row.get("notes", [])
              if isinstance(n, str) or n.get("code") not in skip]  # fmt: skip
     video = row.get("placement", {}).get("video_error_ms")

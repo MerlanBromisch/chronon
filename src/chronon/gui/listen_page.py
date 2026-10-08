@@ -243,8 +243,8 @@ class ListenPage(QWidget):
                 old.setParent(None)
         self.badge_box.addWidget(badge(texts.verdict(row)))
         self.device.setText(f"Gerät {row['device']}")
-        details = [hint(row), f"Konfidenz {round(100 * row['confidence'])} %"]
-        self.hint.setText(" · ".join(d for d in details if d))
+        self.hint.setText(hint(row, links=False))
+        self.hint.setVisible(bool(self.hint.text()))
         self.file_label.setText(path.stem)
         start, end = self.timeline.span(path)
         zero = self.timeline.zero

@@ -161,8 +161,9 @@ notes of older reports into `{"code": "text", "text": …}`.
    reference track(s) (`-r`). The reference choice is prominent, not hidden in settings: it
    matters more than anything else.
 3. **Sync** — step, percentage, time left; cancel.
-4. **Result** — one row per file / device: offset, drift (ppm), confidence, `wander_ms`, and a
-   clear "no reliable match" state. Re-run with another reference.
+4. **Result** — one row per file / device: offset, drift (ppm), `wander_ms`, and a clear "no
+   reliable match" state (the confidence stays in the protocol: a low share of agreeing windows
+   is normal in a room and read as a failure). Re-run with another reference.
 5. **Listen** — play a short excerpt around a chosen point: reference and file together
    (e.g. reference left, file right, or mixed). Latency does not matter.
 6. **Export** — sync (originals) or correct (corrected audio), WAV / CAF, `--join`, output
