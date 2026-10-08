@@ -2,9 +2,14 @@
 
 **Automatic waveform-based sync for multi-device recordings — with clock drift correction.**
 
-> Status: beta 1.0.0-beta.1. The desktop app and the command line measure, place and
+> Status: beta [1.0.0-beta.1](https://github.com/MerlanBromisch/chronon/releases). The desktop app and the command line measure, place and
 > correct recordings and write a Final Cut Pro / Logic timeline; tested on a 4 h musical (56
 > files from two desks, a Zoom recorder and two cameras) and an interview.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dark-result.png">
+  <img src="docs/screenshots/light-result.png" alt="The result of a 4 h musical: five devices on one timeline, every clip with its waveform">
+</picture>
 
 ## Why
 
@@ -62,13 +67,28 @@ The app is in German. Six steps, one after the other:
    device everything is measured against: Chronon suggests one; change it in a device's "…"
    menu. A desk's "Vergleichsspuren" (the tracks the others are compared with) are chosen
    automatically; change them only if a file finds no reliable match.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dark-devices.png">
+     <img src="docs/screenshots/light-devices.png" alt="Step 2: the devices Chronon found, the reference desk and its comparison tracks">
+   </picture>
 3. **Sync** — measures every file, a few minutes at most.
 4. **Ergebnis** — the timeline and, under "Messdetails", start, drift and verdict per file.
 5. **Hören** — files that need checking come first. Play the reference and a file together:
    one sound means in sync, an echo means an offset.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dark-listen.png">
+     <img src="docs/screenshots/light-listen.png" alt="Step 5: a file under the reference for the same time, played side by side or mixed">
+   </picture>
 6. **Export** — "Sync" writes a timeline of the original files (nothing else is written);
    "Korrigiert" writes drift-corrected audio plus a timeline. The output folder can never be
    the originals' folder; originals are only read.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dark-export.png">
+     <img src="docs/screenshots/light-export.png" alt="Step 6: export a timeline of the originals or drift-corrected audio">
+   </picture>
 
 Open the `.fcpxml` in Final Cut Pro (File → Import → XML) or Logic Pro (File → Import →
 Final Cut Pro XML). Tips:
@@ -157,7 +177,8 @@ uv run chronon eval /tmp/scene                            # analyze a synth fold
 ```
 
 `chronon synth` writes one WAV per clip plus a `truth.json` holding each device's true start times
-and clock drift. Presets: `basic`, `drift`, `multiclip`, `music`. Design and decisions:
+and clock drift. Presets: `basic`, `drift`, `multiclip`, `music`. `scripts/screenshots.py` makes
+the README's screenshots (light and dark) from real recordings. Design and decisions:
 [ROADMAP.md](ROADMAP.md), [docs/app.md](docs/app.md), [docs/export.md](docs/export.md).
 
 **Releases:** the "App build" workflow builds and self-tests the apps for all three systems
