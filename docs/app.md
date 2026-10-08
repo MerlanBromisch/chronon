@@ -252,7 +252,8 @@ Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python 
 - `jobs.py`: a `Job` runs `chronon <command> --json` in a child process (`QProcess`) and turns
   its events into signals; cancel = kill. The frozen app runs itself with `--worker <command>`.
 - `app.py --selftest FOLDER`: reads a folder in the window and analyses it in a worker, without
-  a screen; the app build (`.github/workflows/app.yml`) runs it on all three platforms.
+  a screen; the app build (`.github/workflows/app.yml`) runs it on all three platforms. The
+  build runs on demand ("Run workflow" on a branch) and for `v*` tags, not on every push.
 - Tests: `tests/test_gui.py` (offscreen Qt; CI installs the `gui` extra).
 - Not yet: the audition of step 2, steps 3–6 and settings (placeholders), IBM Plex (not bundled; falls back to the
   system's sans and mono fonts).
