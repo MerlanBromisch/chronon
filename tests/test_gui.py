@@ -6,6 +6,7 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytest.importorskip("PySide6", reason="the app's extra (uv sync --extra gui) is not installed")
@@ -358,3 +359,31 @@ def test_progress_says_100_only_when_done(app):
     win.sync._progress({"task": "drift", "done": 1.0})
     assert win.sync.number.text() == "99 %"
     win.close()
+
+
+def test_playback_is_one_continuous_stream_decoded_ahead(app):
+    from chronon.gui import audition
+
+    rate = audition.RATE
+
+    def source(start, seconds):  # a ramp: its sample index, so gaps and overlaps show
+        first = round(start * rate)
+        n = round(seconds * rate)
+        ramp = np.arange(first, first + n, dtype=np.float32)
+        return np.column_stack([ramp, ramp])
+
+    stream = audition._Stream(source, 2.0, 2.0 + 9.5, None)
+    stream.begin()
+    got = bytearray()
+    end = time.monotonic() + 10
+    while time.monotonic() < end:
+        with stream.lock:
+            done = stream.finished and not stream.data
+        if done:
+            break
+        got += stream.readData(1 << 16)
+    stream.stop()
+    x = np.frombuffer(bytes(got), dtype="<f4").reshape(-1, 2)[:, 0]
+    x = x[x > 0]  # silence where decoding fell behind is allowed, gaps in the audio are not
+    assert len(x) == round(9.5 * rate)
+    assert np.array_equal(x, np.arange(2 * rate, 2 * rate + len(x), dtype=np.float32))

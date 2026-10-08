@@ -5,11 +5,13 @@ overviews of whole tracks from ``chronon overview`` in a job, cached on disk."""
 
 from __future__ import annotations
 
+import logging
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QIODevice, QObject, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
@@ -19,7 +21,12 @@ from chronon.gui import fmt, settings
 from chronon.gui.jobs import Job
 
 RATE = listen.LISTEN_RATE
-CHUNK_S = 8.0  # playback is fed in pieces of this length
+FRAME_BYTES = 2 * 4  # stereo float32
+FIRST_S = 1.0  # decoded before playback starts
+CHUNK_S = 4.0  # then decoded ahead in pieces of this length
+AHEAD_BYTES = int(12 * RATE) * FRAME_BYTES  # keep about this much decoded ahead
+SINK_BUFFER_S = 0.5
+log = logging.getLogger(__name__)
 
 Source = Callable[[float, float], np.ndarray]  # (start_s, seconds) -> (frames, 2) float32
 
@@ -96,8 +103,87 @@ def _levels(peaks: np.ndarray, n: int) -> np.ndarray:
     return np.maximum.reduceat(level, starts)
 
 
+class _Stream(QIODevice):
+    """Audio for the sink, decoded ahead in a thread: the sink pulls from one continuous
+    stream (no restart, no gap every few seconds), and slow decoding (a video on a USB drive)
+    or a busy window only cost a dropout when the buffer runs dry."""
+
+    def __init__(self, source: Source, start_s: float, end_s: float, parent: QObject):
+        super().__init__(parent)
+        self.source, self.start_s, self.end_s = source, start_s, end_s
+        self.data = bytearray()
+        self.lock = threading.Lock()
+        self.room = threading.Condition(self.lock)
+        self.finished = False  # everything up to end_s is decoded
+        self.starved = 0  # times decoding fell behind (each a moment of silence)
+        self.stopped = False
+        self.thread = threading.Thread(target=self._decode, daemon=True)
+
+    def begin(self) -> None:
+        # the first second synchronously: playback starts at once and with sound
+        self._add(self.start_s, min(FIRST_S, self.end_s - self.start_s))
+        self.open(QIODevice.OpenModeFlag.ReadOnly)
+        self.thread.start()
+
+    def stop(self) -> None:
+        with self.lock:
+            self.stopped = True
+            self.room.notify_all()
+        self.close()
+
+    def _add(self, start: float, seconds: float) -> bool:
+        if seconds <= 0:
+            return False
+        try:
+            x = np.ascontiguousarray(self.source(start, seconds), dtype="<f4")
+        except Exception:  # noqa: BLE001 (a file gone or unreadable: end the stream)
+            log.exception("playback: decoding at %.1f s failed", start)
+            return False
+        with self.lock:
+            self.data += x.tobytes()
+        return True
+
+    def _decode(self) -> None:
+        t = self.start_s + FIRST_S
+        while True:
+            with self.lock:
+                while len(self.data) > AHEAD_BYTES and not self.stopped:
+                    self.room.wait()
+                if self.stopped:
+                    return
+            seconds = min(CHUNK_S, self.end_s - t)
+            if not self._add(t, seconds):
+                break
+            t += seconds
+        with self.lock:
+            self.finished = True
+
+    def isSequential(self) -> bool:  # noqa: N802 (Qt API)
+        return True
+
+    def bytesAvailable(self) -> int:  # noqa: N802
+        with self.lock:
+            return len(self.data) + super().bytesAvailable()
+
+    def readData(self, maxlen: int) -> bytes:  # noqa: N802
+        with self.lock:
+            n = min(maxlen, len(self.data)) // FRAME_BYTES * FRAME_BYTES
+            out = bytes(self.data[:n])
+            del self.data[:n]
+            self.room.notify_all()
+            if n == 0 and not self.finished and maxlen >= FRAME_BYTES:
+                # decoding fell behind: a moment of silence keeps the stream going
+                self.starved += 1
+                n = min(maxlen, FRAME_BYTES * RATE // 50) // FRAME_BYTES * FRAME_BYTES
+                return bytes(n)
+        return out
+
+    def writeData(self, data) -> int:  # noqa: N802
+        return -1
+
+
 class Player(QObject):
-    """Plays stereo float audio from a ``Source`` in pieces, from a start time on.
+    """Plays stereo float audio from a ``Source`` from a start time on, as one stream.
     ``position`` reports the time playing now; without an audio output it stays silent."""
 
     position = Signal(float)
@@ -105,11 +191,9 @@ class Player(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self.source: Source | None = None
         self.sink: QAudioSink | None = None
-        self.buffer: QBuffer | None = None
-        self.chunk_start = 0.0
-        self.end_s = float("inf")
+        self.stream: _Stream | None = None
+        self.start_s = 0.0
         self.timer = QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self._tick)
@@ -128,10 +212,15 @@ class Player(QObject):
 
     def play(self, source: Source, start_s: float, end_s: float = float("inf")) -> bool:
         self.stop()
-        if not self.available():
+        if not self.available() or end_s - start_s <= 0:
             return False
-        self.source, self.end_s = source, end_s
-        self._feed(start_s)
+        self.start_s = start_s
+        self.stream = _Stream(source, start_s, end_s, self)
+        self.stream.begin()
+        self.sink = QAudioSink(QMediaDevices.defaultAudioOutput(), self.format, self)
+        self.sink.setBufferSize(int(SINK_BUFFER_S * RATE) * FRAME_BYTES)  # rides out a busy GUI
+        self.sink.stateChanged.connect(self._state)
+        self.sink.start(self.stream)
         self.timer.start()
         self.playing_changed.emit(True)
         return True
@@ -142,37 +231,25 @@ class Player(QObject):
             self.sink.stateChanged.disconnect(self._state)
             self.sink.stop()
             self.sink.deleteLater()
-        self.sink, self.buffer = None, None
+        if self.stream is not None:
+            if self.stream.starved:
+                log.warning("playback: decoding fell behind %d times", self.stream.starved)
+            self.stream.stop()
+            self.stream.deleteLater()
+        self.sink, self.stream = None, None
         self.timer.stop()
         if was:
             self.playing_changed.emit(False)
 
-    def _feed(self, start_s: float) -> None:
-        assert self.source is not None
-        seconds = min(CHUNK_S, self.end_s - start_s)
-        if seconds <= 0:
-            self.stop()
-            return
-        data = np.ascontiguousarray(self.source(start_s, seconds), dtype="<f4")
-        if self.sink is not None:
-            self.sink.stateChanged.disconnect(self._state)
-            self.sink.stop()
-            self.sink.deleteLater()
-        self.chunk_start = start_s
-        self.buffer = QBuffer(self)
-        self.buffer.setData(QByteArray(data.tobytes()))
-        self.buffer.open(QIODevice.OpenModeFlag.ReadOnly)
-        self.sink = QAudioSink(QMediaDevices.defaultAudioOutput(), self.format, self)
-        self.sink.stateChanged.connect(self._state)
-        self.sink.start(self.buffer)
-
     def _state(self, state) -> None:
-        if state == QAudio.State.IdleState and self.sink is not None:
-            self._feed(self.chunk_start + CHUNK_S)  # the piece is over: the next one
+        # idle with nothing left to decode: the end was reached
+        if state == QAudio.State.IdleState and self.stream is not None and self.stream.finished:
+            if not self.stream.bytesAvailable():
+                self.stop()
 
     def _tick(self) -> None:
         if self.sink is not None:
-            self.position.emit(self.chunk_start + self.sink.processedUSecs() / 1e6)
+            self.position.emit(self.start_s + self.sink.processedUSecs() / 1e6)
 
 
 class Overviews(QObject):
