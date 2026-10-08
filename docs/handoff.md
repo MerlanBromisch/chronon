@@ -33,7 +33,8 @@ this file when it is out of date.
   Linux only, once per push; main pushes run all three systems. Before calling a PR done, start
   CI once by hand on its branch ("Run workflow", `workflow_dispatch`) for all three systems, and
   the app build too when the app or packaging changed. Jobs time out after 20 min (app build
-  30 min): a hung `apt-get` once held a runner for 6 h.
+  30 min): a hung `apt-get` once held a runner for 6 h, another took 18 min; so Linux takes
+  ffmpeg as a static build from GitHub (like Windows) and runs apt only for a missing Qt library.
 - **Desktop app** (`src/chronon/gui/`, see `docs/app.md` "The app in the repo"): all six steps
   and the settings are built, following the boards and their corrections. `app.walk()` drives the
   whole flow; the app build (on demand and for `v*` tags) runs it as a self test on all three

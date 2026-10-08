@@ -33,9 +33,16 @@ jobs:
           case "$RUNNER_OS" in
             macOS) brew install ffmpeg ;;
             Linux)
-              sudo apt-get update
-              # ffmpeg, and Qt's runtime libraries for the app's tests
-              sudo apt-get install -y ffmpeg libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 ;;
+              # a static build from GitHub: apt-get once took 18 min on a slow mirror
+              curl -fsSL -o "$RUNNER_TEMP/ffmpeg.tar.xz" https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-lgpl.tar.xz
+              tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP"
+              ls -d "$RUNNER_TEMP"/ffmpeg-*/bin >> "$GITHUB_PATH"
+              # Qt's runtime libraries for the app's tests: apt only if one is missing
+              qt="libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3"
+              if ! dpkg -s $qt >/dev/null 2>&1; then
+                sudo apt-get update -o Acquire::Retries=3
+                timeout 600 sudo apt-get install -y --no-install-recommends $qt
+              fi ;;
             Windows)
               curl -fsSL -o "$RUNNER_TEMP/ffmpeg.zip" https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip
               unzip -q "$RUNNER_TEMP/ffmpeg.zip" -d "$RUNNER_TEMP"
