@@ -85,10 +85,12 @@ class Timeline:
 
     def suggest(self, path: Path | str, seconds: float = LISTEN_S) -> float:
         """A reference time worth listening at: around the middle window the measurement
-        agreed on, else the middle of the part the file shares with its reference track."""
+        agreed on, else (no reliable match) the middle of the part the file shares with its
+        reference track."""
         path = Path(path)
         r = self.result(path)
-        good = sorted(r.alignment.good_s)
+        # the measured windows only mean something when they agree; else they are noise
+        good = sorted(r.alignment.good_s) if r.alignment.reliable else []
         if good:
             middle = float(r.alignment.ref_time(good[len(good) // 2]))
         else:

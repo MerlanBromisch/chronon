@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -16,26 +16,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chronon.gui import fmt, theme
+from chronon.gui import fmt, settings, theme
+from chronon.gui.audition import Overviews, Player
 from chronon.gui.devices_page import DevicesPage
+from chronon.gui.export_page import ExportPage
 from chronon.gui.files_page import FilesPage
+from chronon.gui.jobs import Job
+from chronon.gui.listen_page import ListenPage
 from chronon.gui.project import Project
+from chronon.gui.result_page import ResultPage
+from chronon.gui.settings_page import SettingsPage
+from chronon.gui.sync_page import SyncPage
 
 STEPS = ["Dateien", "Geräte & Referenz", "Sync", "Ergebnis", "Hören", "Export"]
-# "&&": a single & marks a keyboard shortcut on a button
-NEXT = {k: f"Weiter: {STEPS[k + 1]}".replace("&", "&&") for k in range(len(STEPS) - 1)}
+NEXT = {k: f"Weiter: {STEPS[k + 1]}" for k in range(len(STEPS) - 1)}
 SETTINGS = len(STEPS)  # page index of the settings
-
-
-class Placeholder(QWidget):
-    """A step that is not built yet."""
-
-    def __init__(self, text: str):
-        super().__init__()
-        label = QLabel(text)
-        label.setObjectName("placeholder")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        QVBoxLayout(self).addWidget(label)
 
 
 class Window(QMainWindow):
@@ -44,9 +39,9 @@ class Window(QMainWindow):
         self.setWindowTitle("Chronon")
         self.setMinimumSize(1024, 700)
         self.resize(1200, 780)
-        self.settings = QSettings("Chronon", "Chronon")
-        self.appearance = appearance or str(self.settings.value("appearance", "system"))
-        self.tokens = theme.TOKENS[theme.resolve(self.appearance)]
+        self.appearance = appearance or settings.appearance()
+        self.before_settings = 0
+        self.tokens = dict(theme.TOKENS[theme.resolve(self.appearance)])
         self.apply_theme()
         self.project = Project()
         self.step = 0
@@ -90,14 +85,26 @@ class Window(QMainWindow):
         # pages
         self.files = FilesPage(self.project, self.tokens)
         self.files.changed.connect(self.update_chrome)
-        self.devices = DevicesPage(self.project, self.tokens)
+        self.player = Player(self)
+        self.overviews = Overviews(self)
+        self.devices = DevicesPage(self.project, self.tokens, self.overviews, self.player)
         self.devices.changed.connect(self.update_chrome)
+        self.sync = SyncPage(self.project)
+        self.sync.changed.connect(self.update_chrome)
+        self.sync.finished.connect(lambda: self.show_step(3))
+        self.result = ResultPage(self.project, self.tokens)
+        self.result.changed.connect(self.update_chrome)
+        self.result.other_reference.connect(lambda: self.show_step(1))
+        self.listen = ListenPage(self.project, self.tokens, self.player)
+        self.listen.changed.connect(self.update_chrome)
+        self.export = ExportPage(self.project, self.tokens)
+        self.export.changed.connect(self.update_chrome)
         self.pages = QStackedWidget()
-        self.pages.addWidget(self.files)
-        self.pages.addWidget(self.devices)
-        for label in STEPS[2:]:
-            self.pages.addWidget(Placeholder(f"{label}: kommt in einem der nächsten Schritte."))
-        self.pages.addWidget(Placeholder("Einstellungen: kommen in einem der nächsten Schritte."))
+        for page in (self.files, self.devices, self.sync, self.result, self.listen, self.export):
+            self.pages.addWidget(page)
+        self.settings_page = SettingsPage(self.project)
+        self.settings_page.appearance_changed.connect(self.set_appearance)
+        self.pages.addWidget(self.settings_page)
 
         # footer
         footer = QFrame()
@@ -155,6 +162,30 @@ class Window(QMainWindow):
         self.step_buttons.addButton(b, page)
         return b
 
+    def closeEvent(self, event):  # noqa: N802 (Qt API)
+        self.shutdown()
+        super().closeEvent(event)
+
+    def shutdown(self) -> None:
+        """Stop playback and every child process before the window goes."""
+        self.player.stop()
+        self.overviews.stop()
+        self.files.cancel()
+        for job in self.findChildren(Job):  # sync / export, maybe still finishing
+            job.cancel()
+            job.wait(5000)
+
+    def set_appearance(self, appearance: str) -> None:
+        """Change the theme live: every widget holds this one token dict."""
+        self.appearance = appearance
+        self.tokens.clear()
+        self.tokens.update(theme.TOKENS[theme.resolve(appearance)])
+        self.apply_theme()
+        for page in (self.result, self.devices):
+            if hasattr(page, "rebuild") and page.isVisible():
+                page.rebuild()
+        self.update()
+
     def apply_theme(self) -> None:
         app = QApplication.instance()
         app.setStyle("Fusion")
@@ -163,6 +194,9 @@ class Window(QMainWindow):
 
     # --- navigation -------------------------------------------------------------------
     def show_step(self, page: int) -> None:
+        self.player.stop()
+        if page == SETTINGS and self.step != SETTINGS:
+            self.before_settings = self.step
         self.step = page
         self.pages.setCurrentIndex(page)
         self.step_buttons.button(page).setChecked(True)
@@ -172,43 +206,90 @@ class Window(QMainWindow):
                 label.setProperty("current", current)
                 label.style().unpolish(label)
                 label.style().polish(label)
-        if page == 1:
-            self.devices.enter()
+        enter = getattr(self.pages.widget(page), "enter", None)
+        if enter is not None:
+            enter()
         self.update_chrome()
 
     def go_back(self) -> None:
         if self.step == 0 and self.files.reading:
             self.files.cancel()
-        elif self.step == SETTINGS or self.step > 0:
-            self.show_step(0 if self.step == SETTINGS else self.step - 1)
+        elif self.step == 2 and self.sync.running:
+            self.sync.cancel()
+        elif self.step == 5 and self.export.running:
+            self.export.cancel()
+        elif self.step == 5 and self.export.state in ("done", "rejected"):
+            self.export.state = "form"
+            self.export.show_state()
+        elif self.step == SETTINGS:
+            self.show_step(self.before_settings)
+        elif self.step > 0:
+            self.show_step(self.step - 1)
 
     def go_on(self) -> None:
         if self.step == SETTINGS:
-            self.show_step(0)
+            self.show_step(self.before_settings)
+        elif self.step == 1:  # "Sync starten": measure again only when the devices changed
+            self.show_step(2)
+            if not self.project.synced_now:
+                self.sync.start()
+        elif self.step == 2 and self.sync.state in ("cancelled", "failed", "idle"):
+            self.sync.start()
+        elif self.step == 5 and self.export.state == "done":
+            self.new_project()
+        elif self.step == 5:
+            self.export.start()
         elif self.step + 1 < len(STEPS):
             self.show_step(self.step + 1)
 
+    def new_project(self) -> None:
+        """'Neues Projekt': back to an empty step 1 (the session folder stays)."""
+        self.player.stop()
+        self.project.reset()
+        self.sync.state = "idle"
+        self.export.state, self.export.loaded_for, self.export.name_edited = "form", "", False
+        self.export.folder.clear()
+        self.files.show_state()
+        self.show_step(0)
+
+    def footer(self) -> tuple[str | None, str, bool]:
+        """(left button or None, main button, main enabled) for the current page."""
+        step = self.step
+        if step == SETTINGS:
+            return None, "Fertig", True
+        if step == 0:
+            return ("Abbrechen" if self.files.reading else None), NEXT[0], self.files.ready
+        if step == 1:
+            return "Zurück", "Sync starten", self.devices.ready
+        if step == 2:
+            if self.sync.running:
+                return "Abbrechen", NEXT[2], False
+            if self.sync.state in ("cancelled", "failed"):
+                return "Zurück", "Sync neu starten", self.devices.ready
+            if self.sync.state == "idle":
+                return "Zurück", "Sync starten", self.devices.ready
+            return "Zurück", NEXT[2], self.project.synced_now
+        if step + 1 < len(STEPS):
+            return "Zurück", NEXT[step], self.project.synced_now
+        if self.export.running:
+            return "Abbrechen", "Exportieren", False
+        if self.export.state == "done":
+            return "Zurück", "Neues Projekt", True
+        return "Zurück", "Exportieren", self.project.synced_now
+
     def update_chrome(self) -> None:
         """Header texts and footer buttons for the current page and its state."""
-        settings = self.step == SETTINGS
-        self.step_label.setText("" if settings else f"SCHRITT {self.step + 1} VON {len(STEPS)}")
-        self.title.setText("Einstellungen" if settings else STEPS[self.step])
+        in_settings = self.step == SETTINGS
+        self.step_label.setText("" if in_settings else f"SCHRITT {self.step + 1} VON {len(STEPS)}")
+        self.title.setText("Einstellungen" if in_settings else STEPS[self.step])
         entries, layout = self.project.entries, self.project.layout
         right = fmt.files(len(entries)) if entries and not self.files.reading else ""
         if right and self.step >= 1 and layout is not None and self.project.layout_current:
             count = len(layout.devices)
             right += f" · {count} Gerät" + ("" if count == 1 else "e")
         self.header_right.setText(right)
-        reading = self.step == 0 and self.files.reading
-        self.back.setText("Abbrechen" if reading else "Zurück")
-        self.back.setVisible(reading or self.step > 0)
-        if settings:
-            self.main.setText("Fertig")
-            self.main.setEnabled(True)
-        elif self.step + 1 < len(STEPS):
-            self.main.setText("Sync starten" if self.step == 1 else NEXT[self.step])
-            ready = {0: self.files.ready, 1: self.devices.ready}
-            self.main.setEnabled(ready.get(self.step, False))
-        else:
-            self.main.setText("Exportieren")
-            self.main.setEnabled(False)
+        back, main, enabled = self.footer()
+        self.back.setVisible(back is not None)
+        self.back.setText(back or "")
+        self.main.setText(main.replace("&", "&&"))  # a single & marks a shortcut
+        self.main.setEnabled(enabled)

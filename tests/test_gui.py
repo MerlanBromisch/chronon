@@ -15,7 +15,8 @@ from PySide6.QtCore import QEventLoop  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from chronon import audio, devices, synth  # noqa: E402
-from chronon.gui import devices_page, fmt  # noqa: E402
+from chronon.gui import devices_page, fmt, settings  # noqa: E402
+from chronon.gui.app import walk  # noqa: E402
 from chronon.gui.files_page import UnreadableDialog  # noqa: E402
 from chronon.gui.jobs import Job  # noqa: E402
 from chronon.gui.project import media_files  # noqa: E402
@@ -221,3 +222,98 @@ def test_devices_step_edits_the_layout(app, tmp_path):
     assert layout.tracks == [clip]
     layout.check()
     assert win.main.isEnabled()
+    win.close()
+
+
+@needs_ffmpeg
+def test_audition_shows_the_reference_track(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "cache_dir", lambda: tmp_path / "cache")
+    _scene_with_clips(tmp_path / "media")
+    win = Window(appearance="dark")
+    win.files.add([tmp_path / "media"])
+    _wait(app, lambda: not win.files.reading)
+    win.go_on()
+    _wait(app, lambda: not win.devices.detecting)
+    audition = win.devices.audition
+    assert audition.path == win.project.layout.tracks[0]
+    assert audition.duration == pytest.approx(60.0, abs=0.01)
+    _wait(app, lambda: len(audition.wave.peaks) > 0)  # the overview, from a job
+    assert len(audition.wave.peaks) == 60 * 100
+    audition.move_to(75)
+    assert audition.pos == 60.0 and audition.time.text() == "0:01:00"
+    audition.move_to(12.4)
+    assert audition.slider.value() == round(1000 * 12.4 / 60)
+    # the next file of the reference device (a clip device: its clips)
+    win.devices.set_reference(0)
+    assert audition.title.text().startswith("VORHÖREN")
+    win.close()
+
+
+@needs_ffmpeg
+def test_the_whole_app_from_files_to_export(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "cache_dir", lambda: tmp_path / "cache")
+    monkeypatch.setattr(settings, "data_dir", lambda: tmp_path / "data")
+    _scene_with_clips(tmp_path / "media")
+    win = Window(appearance="light")
+    seen = walk(win, tmp_path / "media", tmp_path / "out")
+    assert seen["files"] == 4 and seen["devices"] == ["cam", "phone", "rec"]
+    assert seen["unreliable"] == [] and seen["failed"] == []
+    assert seen["exported"] == ["cam_korrigiert.wav", "phone_korrigiert.wav", "rec_korrigiert.wav"]
+    assert (tmp_path / "out" / "media.fcpxml").exists()  # the project name: the input folder
+
+    # what the steps show on the way
+    assert win.result.ready and win.listen.rows and win.export.outcome["failed"] == 0
+    logs = sorted(p.name for p in (win.project.folder() / "logs").iterdir())
+    assert logs == ["export-1.log", "sync-1.log"]
+    assert (win.project.folder() / "devices.json").exists()
+
+    # the export refuses the originals' folder before it starts
+    win.go_back()  # back to the form
+    win.export.folder.setText(str(tmp_path / "media"))
+    win.go_on()
+    assert win.export.state == "rejected" and "Originaldateien" in win.export.error
+
+    # a new project starts over
+    win.export.state = "done"
+    win.go_on()
+    assert win.step == 0 and not win.project.entries and win.project.result is None
+    win.close()
+
+
+@needs_ffmpeg
+def test_sync_can_be_cancelled_and_started_again(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(settings, "cache_dir", lambda: tmp_path / "cache")
+    _scene_with_clips(tmp_path / "media")
+    win = Window(appearance="dark")
+    win.files.add([tmp_path / "media"])
+    _wait(app, lambda: not win.files.reading)
+    win.go_on()
+    _wait(app, lambda: not win.devices.detecting)
+    win.go_on()
+    assert win.sync.running and win.back.text() == "Abbrechen"
+    win.go_back()
+    _wait(app, lambda: not win.sync.running)
+    assert win.sync.state == "cancelled" and win.main.text() == "Sync neu starten"
+    assert win.project.result is None and not win.result.ready
+    win.go_on()
+    _wait(app, lambda: not win.sync.running)
+    assert win.sync.state == "done" and win.step == 3
+    # back in step 2 without changes: "Sync starten" shows the result without measuring again
+    win.show_step(1)
+    win.go_on()
+    assert win.step == 2 and win.sync.state == "done" and not win.sync.running
+    win.close()
+
+
+def test_settings_switch_the_theme_live(app, monkeypatch):
+    stored = {}
+    monkeypatch.setattr(settings, "set_appearance", lambda v: stored.setdefault("v", v))
+    win = Window(appearance="light")
+    win.show_step(6)
+    assert win.footer() == (None, "Fertig", True)
+    win.settings_page._appearance(2)
+    assert stored["v"] == "dark" and win.tokens["background"] == "#151618"
+    win.go_on()
+    assert win.step == 0
+    win.close()

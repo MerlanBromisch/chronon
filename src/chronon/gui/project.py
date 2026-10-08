@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 from dataclasses import dataclass, field
@@ -50,6 +51,32 @@ class Project:
     entries: list[Entry] = field(default_factory=list)
     layout: devices.Layout | None = None  # step 2: the devices as the user arranged them
     suggested_tracks: list[Path] = field(default_factory=list)  # Chronon's reference tracks
+    work_dir: Path | None = None  # this session's own files (layout, analysis, protocols)
+    synced: str = ""  # the layout (as JSON) the analysis was made with
+    analysis_path: Path | None = None  # step 3's saved analysis (analyze --save)
+    result: dict | None = None  # step 3's result event (rows per file)
+
+    @property
+    def layout_json(self) -> str:
+        return json.dumps(self.layout.to_dict(), sort_keys=True) if self.layout else ""
+
+    @property
+    def synced_now(self) -> bool:
+        """Whether step 3's result still belongs to the devices of step 2."""
+        return self.result is not None and self.synced == self.layout_json
+
+    def reset(self) -> None:
+        """A new project: everything but the session folder goes."""
+        fresh = Project()
+        for name in ("entries", "layout", "suggested_tracks", "synced", "analysis_path", "result"):
+            setattr(self, name, getattr(fresh, name))
+
+    def folder(self) -> Path:
+        if self.work_dir is None:
+            from chronon.gui import settings
+
+            self.work_dir = settings.new_work_dir()
+        return self.work_dir
 
     def add(self, paths: list[Path]) -> list[Entry]:
         known = {e.path for e in self.entries}

@@ -32,7 +32,7 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
 - `listen.py` — listening and waveforms: reference time ↔ file time (`Timeline`), excerpt pairs, cached peak overviews
 - `messages.py` — notes and user-fixable errors as codes (the app translates; English texts here)
 - `cli.py` — `chronon` command
-- `gui/` — desktop app: `window.py` (shell), `theme.py` (design tokens), `files_page.py` (step 1), `jobs.py` (`chronon … --json` in a child process); see `docs/app.md`
+- `gui/` — desktop app: `window.py` (shell), `theme.py` (design tokens), one `*_page.py` per step, `audition.py` (waveforms, playback), `jobs.py` (`chronon … --json` in a child process), `app.py` (`walk()` = the whole flow, `--selftest`); see `docs/app.md`
 
 ## Conventions
 - Code, comments and docs in English.

@@ -597,9 +597,14 @@ def align_files(
     current.update(step="drift", what="placing clips")
     work.start("drift", "placing clips")
     _link(clips, out, rate, work)
-    for _, clip in clips:
+    unmatched = Alignment(0.0, 0.0, 0.0, False, 0, 0)  # no reliable match: windows_used 0
+    for dev, clip in clips:
         if clip.tracks[0] not in out:
-            raise ValueError(f"{clip.tracks[0].name}: {errors[clip.tracks[0]]}")
+            # one file that matches nothing does not stop the others (docs/app.md: a row with
+            # "reliable": false); it stays at the reference's start
+            log.warning("%s: no match at all (%s)", clip.tracks[0].name, errors[clip.tracks[0]])
+            for t in clip.tracks:
+                out[t] = FileResult(ref_tracks[0], unmatched, dev.name)
     for dev in devs[1:]:
         _borrow_drift(dev, out)
     work.finish("drift")

@@ -196,6 +196,67 @@ QDialog {{ background: {t["panel"]}; }}
     border: 1px solid {t["divider"]}; border-radius: 4px; padding: 8px 12px;
 }}
 #placeholder {{ color: {t["text2"]}; }}
+#rule {{ background: {t["divider"]}; }}
+#percent {{ font-size: 22px; }}
+#choicecard {{ background: {t["panel"]}; border: 1px solid {
+        t["card_border"]
+    }; border-radius: 4px; }}
+#choicecard[selected="true"] {{ border: 1px solid {t["accent"]}; }}
+#warnhint {{ font-size: 12px; color: {t["amber"]}; }}
+#pathfield {{ font-family: "{mono}"; font-size: 12px; }}
+QLineEdit, QComboBox {{ min-height: 30px; padding: 0 10px; border: 1px solid {t["button_border"]};
+    border-radius: 4px; background: {t["input"]}; }}
+QComboBox {{ min-width: 110px; }}
+#monobold {{ font-family: "{mono}"; font-size: 12px; font-weight: 600; }}
+#monotitle {{ font-family: "{mono}"; font-size: 17px; font-weight: 600; }}
+#bigclock {{ font-family: "{mono}"; font-size: 20px; padding: 0 14px; }}
+#filelist {{ border: none; background: {t["panel"]}; }}
+#filelist::item {{ border-top: 1px solid {t["divider"]}; }}
+#filelist::item:selected {{ background: {_mix(t["accent"], t["panel"], 0.10)};
+    color: {t["text"]}; }}
+#filelist::item:disabled {{ background: {t["table_header"]}; color: {t["text2"]};
+    font-size: 11px; font-weight: 600; padding: 6px 14px; }}
+QProgressBar[stopped="true"]::chunk {{ background: {t["text3"]}; }}
+#steprow {{ border-top: 1px solid {t["divider"]}; }}
+#stepmark {{ border: 1px dashed {t["control_border"]}; border-radius: 4px; color: {t["green"]};
+    font-weight: 700; }}
+#stepmark[state="done"] {{ border: 1px solid {t["green_border"]};
+    background: {_mix(t["green"], t["panel"], 0.12)}; }}
+#stepmark[state="running"] {{ border: none; }}
+QLabel[state="waiting"], QLabel[state="cancelled"] {{ color: {t["text3"]}; }}
+#badge_ok, #badge_wanders, #badge_unsure, #badge_bad, #badge_ref {{
+    border-radius: 4px; padding: 2px 9px; font-size: 12px; font-weight: 500; }}
+#badge_ok {{ color: {t["green"]}; border: 1px solid {t["green_border"]};
+    background: {_mix(t["green"], t["panel"], 0.12)}; }}
+#badge_wanders {{ color: {t["amber"]}; border: 1px solid {t["amber_border"]};
+    background: {_mix(t["amber"], t["panel"], 0.12)}; }}
+#badge_unsure {{ color: {t["text2"]}; border: 1px dashed {t["control_border"]}; }}
+#badge_bad {{ color: {t["red"]}; border: 1px solid {t["red_border"]};
+    background: {_mix(t["red"], t["panel"], 0.12)}; }}
+#badge_ref {{ color: {t["on_accent"]}; background: {t["accent"]}; border: 1px solid {t["accent"]};
+    font-weight: 600; }}
+#banner_warn {{ background: {_mix(t["amber"], t["background"], 0.10)};
+    border: 1px solid {t["amber_border"]}; border-radius: 4px; }}
+#banner_error {{ background: {_mix(t["red"], t["background"], 0.10)};
+    border: 1px solid {t["red_border"]}; border-radius: 4px; }}
+#bannericon_warn {{ color: {t["amber"]}; font-size: 18px; font-weight: 700; }}
+#bannericon_error {{ color: {t["red"]}; font-size: 18px; font-weight: 700; }}
+#square_ok {{ color: {t["green"]}; border: 1px solid {t["green_border"]}; border-radius: 4px;
+    background: {_mix(t["green"], t["panel"], 0.12)}; font-size: 20px; font-weight: 700; }}
+#square_bad {{ color: {t["red"]}; border: 1px solid {t["red_border"]}; border-radius: 4px;
+    background: {_mix(t["red"], t["panel"], 0.12)}; font-size: 20px; font-weight: 700; }}
+QPushButton[role="segment"] {{ border-radius: 0; min-height: 28px; }}
+QPushButton[role="segment"][edge="first"] {{ border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px; }}
+QPushButton[role="segment"][edge="last"] {{ border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px; }}
+QPushButton[role="segment"]:checked {{ background: {t["accent"]}; color: {t["on_accent"]};
+    border-color: {t["accent"]}; font-weight: 600; }}
+#bigtime {{ font-family: "{mono}"; font-size: 15px; padding: 0 8px; }}
+QSlider::groove:horizontal {{ height: 4px; background: {t["divider"]}; border-radius: 2px; }}
+QSlider::sub-page:horizontal {{ background: {t["text2"]}; border-radius: 2px; }}
+QSlider::handle:horizontal {{ background: {t["accent"]}; width: 12px; margin: -7px 0;
+    border-radius: 2px; }}
 #section {{ font-size: 11px; letter-spacing: 1px; color: {t["text2"]}; font-weight: 600; }}
 #muted {{ font-size: 12px; color: {t["text2"]}; }}
 #problem {{ font-size: 12px; color: {t["red"]}; }}

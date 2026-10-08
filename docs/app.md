@@ -242,21 +242,40 @@ Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python 
 - `files_page.py` + `project.py`: step 1. Files and folders (searched with subfolders for audio
   and video), read in the GUI process on a few threads (`audio.probe`, one ffprobe each), so the
   list shows "23 / 56" while it reads. Unreadable files ask one by one (board 04).
-- `devices_page.py`: step 2 without the audition (boards 05–05c). `devices.detect` runs on a
-  thread with the infos of step 1 (it only reads levels for the suggestion); the page edits the
-  project's `devices.Layout` through its methods (`move_device`, `move_files`, `merge`), which
-  keep the reference and the suggestion on their devices. Rename (name + description) in
-  place, reorder by the grip or the row menu, regroup clips (multitrack devices are disabled
-  targets), reference device by its radio, reference tracks as chips (double click names one).
-  Device names are checked as `Layout.check` does (file names, unique ignoring case).
+- `devices_page.py`: step 2 (boards 05–05c). `devices.detect` runs on a thread with the infos
+  of step 1 (it only reads levels for the suggestion); the page edits the project's
+  `devices.Layout` through its methods (`move_device`, `move_files`, `merge`), which keep the
+  reference and the suggestion on their devices. Rename (name + description) in place, reorder
+  by the grip or the row menu, regroup clips (multitrack devices are disabled targets),
+  reference device by its radio, reference tracks as chips (double click names one), and the
+  audition of a reference track.
+- `audition.py`: `Waveform` (bars of peaks, a cursor, click to seek), `Player` (QtMultimedia,
+  stereo float fed in 8 s pieces from a source function), `Overviews` (`chronon overview` in a
+  job, cached in the settings' cache folder), `Audition` (step 2's player).
+- `sync_page.py`: step 3. Saves the layout into the session folder and runs
+  `analyze --devices devices.json --save analysis.json --log logs/sync-N.log`; the plan event
+  becomes the step list (board 06), cancel kills the job (board 07). Going back to step 2 and on
+  without changes shows the result again without measuring.
+- `result_page.py`: step 4. Verdict, a view-only timeline from the result's placements, the
+  details table with German notes (`texts.py`) and verdict badges (README "Verdict badges").
+- `listen_page.py`: step 5. Files to check first, then reliable ones; the reference and the file
+  ±5 s around a position (`listen.Timeline.pair`), played side by side or mixed.
+- `export_page.py`: step 6. Sync or Korrigiert from the saved analysis (`sync|correct
+  --analysis`), with the corrections to the boards (timeline as a format choice); the folder
+  of the originals is refused before the run; the outcome lists each file with its check.
+- `settings_page.py` + `settings.py`: language (Deutsch only), appearance switched live, the
+  cache folder (choose, clear), the session's protocols, about. Each start of the app gets a
+  session folder (`<app data>/sessions/<time>/`) for its layout, analysis and protocols.
+- `texts.py` (the core's codes in German), `widgets.py` (badges, banners, step list, cards).
 - `jobs.py`: a `Job` runs `chronon <command> --json` in a child process (`QProcess`) and turns
   its events into signals; cancel = kill. The frozen app runs itself with `--worker <command>`.
-- `app.py --selftest FOLDER`: reads a folder in the window and analyses it in a worker, without
-  a screen; the app build (`.github/workflows/app.yml`) runs it on all three platforms. The
-  build runs on demand ("Run workflow" on a branch) and for `v*` tags, not on every push.
+- `app.py`: `walk()` drives every step like a user (read, devices, sync, result, listen,
+  export); `--selftest FOLDER` runs it without a screen, and the app build
+  (`.github/workflows/app.yml`) runs that on all three platforms. The build runs on demand
+  ("Run workflow" on a branch) and for `v*` tags, not on every push.
 - Tests: `tests/test_gui.py` (offscreen Qt; CI installs the `gui` extra).
-- Not yet: the audition of step 2, steps 3–6 and settings (placeholders), IBM Plex (not bundled; falls back to the
-  system's sans and mono fonts).
+- Not yet: IBM Plex (not bundled; the system's sans and mono fonts are used), other languages,
+  a project file to reopen a session later.
 
 ## Later
 - Timeline view with waveforms (needs peak overviews from the core) and manual correction
