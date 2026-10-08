@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chronon.gui import fmt, settings, texts, theme
+from chronon.gui import fmt, menus, settings, texts, theme
 from chronon.gui.audition import Overviews, Player
 from chronon.gui.devices_page import DevicesPage
 from chronon.gui.export_page import ExportPage
@@ -141,6 +141,7 @@ class Window(QMainWindow):
         row.addWidget(sidebar)
         row.addWidget(content, 1)
         self.setCentralWidget(central)
+        menus.install(self)
         self.show_step(0)
 
     def _side_button(self, mark: str, text: str, page: int) -> QPushButton:
