@@ -251,17 +251,21 @@ Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python 
   by the grip or the row menu, regroup clips (multitrack devices are disabled targets),
   reference device by its radio, reference tracks as chips (double click names one), and the
   audition of a reference track.
-- `audition.py`: `Waveform` (bars of peaks, a cursor, click to seek), `Player` (QtMultimedia,
-  stereo float fed in 8 s pieces from a source function), `Overviews` (`chronon overview` in a
-  job, cached in the settings' cache folder), `Audition` (step 2's player).
+- `audition.py`: `Waveform` (a whole overview, one column per pixel on a dB scale, cursor, click
+  to seek, "being computed" with its share), `Player` (QtMultimedia pulling one continuous
+  stereo float stream that a thread decodes ~12 s ahead from a source function), `Overviews`
+  (`chronon overview` in jobs, two at a time, what is shown first; after a sync the files to
+  listen to are computed ahead into the settings' cache folder), `Audition` (step 2's player).
 - `sync_page.py`: step 3. Saves the layout into the session folder and runs
   `analyze --devices devices.json --save analysis.json --log logs/sync-N.log`; the plan event
   becomes the step list (board 06), cancel kills the job (board 07). Going back to step 2 and on
   without changes shows the result again without measuring.
-- `result_page.py`: step 4. Verdict, a view-only timeline from the result's placements, the
-  details table with German notes (`texts.py`) and verdict badges (README "Verdict badges").
-- `listen_page.py`: step 5. Files to check first, then reliable ones; the reference and the file
-  ±5 s around a position (`listen.Timeline.pair`), played side by side or mixed.
+- `result_page.py`: step 4. Verdict, a view-only timeline from the result's placements drawn
+  like an editor's (ruler, lanes, regions with name and waveform), the details table with
+  German notes (`texts.py`) and verdict badges (README "Verdict badges").
+- `listen_page.py`: step 5. Files to check first, then reliable ones; the file's whole waveform
+  under the reference's for the same time (`listen.window`), played from a position side by side
+  or mixed (`listen.Timeline.pair`).
 - `export_page.py`: step 6. Sync or Korrigiert from the saved analysis (`sync|correct
   --analysis`), with the corrections to the boards (timeline as a format choice); the folder
   of the originals is refused before the run; the outcome lists each file with its check.
