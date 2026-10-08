@@ -1,7 +1,7 @@
 name: App build
 
-# Builds cost the most Actions minutes (macOS counts 10x): only on demand ("Run workflow", any
-# branch) and for a version tag.
+# Builds on demand ("Run workflow", any branch: the apps as artifacts for 14 days) and for a
+# version tag (v1.0.0, v1.0.0-rc1): then the three apps also go out as a GitHub Release.
 on:
   workflow_dispatch:
   push:
@@ -68,3 +68,28 @@ jobs:
           name: Chronon-${{ runner.os }}
           path: Chronon.zip
           retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: GitHub Release with the three apps
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for os in macOS Windows Linux; do
+            mv "artifacts/Chronon-$os/Chronon.zip" "Chronon-$TAG-$os.zip"
+          done
+          pre=""
+          case "$TAG" in *-*) pre="--prerelease" ;; esac  # v1.0.0-rc1: a release candidate
+          gh release create "$TAG" Chronon-"$TAG"-*.zip --repo "$GITHUB_REPOSITORY" \
+            --title "Chronon $TAG" $pre --generate-notes \
+            --notes "Download the zip for your system and unpack it. The apps are not signed: see the README (Install) for opening them the first time."
