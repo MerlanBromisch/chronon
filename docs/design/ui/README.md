@@ -194,6 +194,18 @@ Decided 2026-10-08, second round:
     Fenster, Hilfe; the app is called Chronon there also when started from the terminal.
 15. **Window:** at least 1150 × 720; every page fits at that size (long hints wrap).
 
+Decided 2026-10-08, the reference:
+
+16. **The reference is a device** (its clock and its zero), all its tracks and clips: on the
+    result's timeline and in the details every clip of it is "Referenz". Section 2 is titled
+    "2 · Referenz: <Gerät>".
+17. **A recorder's clips:** nothing to choose (each is the reference for its time).
+18. **A desk's "Vergleichsspuren":** the tracks the others are compared with (what sounds like
+    them), not the clock. Chronon picks them (the loudest); section 2 shows them in one line
+    ("Vergleichsspuren: 13, 17 · automatisch gewählt · Ändern …"), the chips only after
+    "Ändern …", with "Automatisch" to go back. A result with an unsure file offers "Andere
+    Vergleichsspuren wählen …", which opens them.
+
 ## Not designed yet
 
 - Applying the appearance setting live (the row is designed, both themes exist).

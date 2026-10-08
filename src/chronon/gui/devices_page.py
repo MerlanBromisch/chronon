@@ -273,6 +273,7 @@ class DevicesPage(QWidget):
         self.open: devices.Device | None = None  # the device whose files are shown
         self.editing: devices.Device | None = None  # the device being renamed
         self.shown: devices.Device | None = None  # the device section 2 shows (its radio)
+        self.compare_open = False  # the desk's comparison tracks shown as chips
         self.selected: set[Path] = set()
         self.error = ""
         self.setAcceptDrops(True)
@@ -619,29 +620,66 @@ class DevicesPage(QWidget):
         clip = next((c for c in ref.clips if set(layout.tracks) <= set(c.tracks)), ref.clips[0])
         multi = len(clip.tracks) > 1
         head = QHBoxLayout()
-        title = f"2 · Referenz-{'Spuren' if multi else 'Aufnahme'} von {ref.name}"
-        head.addWidget(_label(title, "cardtitle"))
+        head.addWidget(_label(f"2 · Referenz: {ref.name}", "cardtitle"))
         head.addStretch()
-        if multi:
-            hint = "Doppelklick benennt eine Spur."
-            if (
-                layout.reference == layout.suggested
-                and layout.tracks == self.project.suggested_tracks
-            ):
-                hint = f"Vorschlag: die lautesten Spuren, {len(layout.tracks)} gewählt. " + hint
-            note = _label(hint, "muted")
+        about = (
+            "Alle Spuren laufen auf seiner Uhr." if multi
+            else "Alle Aufnahmen dieses Geräts sind die Referenz, jede für ihre Zeit."
+            if len(ref.clips) > 1 else ""
+        )  # fmt: skip
+        if about:
+            note = _label(about, "muted")
             note.setWordWrap(True)
             note.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             head.addSpacing(24)
             head.addWidget(note, 1)
         self.tracks_box.addLayout(head)
+        if multi:
+            self._compare(ref, clip)
+            listen_to = [t for t in clip.tracks if t in layout.tracks] + [
+                t for t in clip.tracks if t not in layout.tracks
+            ]
+        else:
+            listen_to = [c.tracks[0] for c in ref.clips]
+        self.audition.set_tracks(
+            [(t, ref.track_label(t) if multi else t.name) for t in listen_to],
+            {t: infos[t].duration_s for t in listen_to if t in infos},
+        )
+
+    def _compare(self, ref: devices.Device, clip: devices.Clip) -> None:
+        """'Vergleichsspuren' of a desk: the tracks the others are compared with (what
+        sounds like them, not the clock: every track runs on the desk's clock). Chronon picks
+        them; the choice opens only on 'Ändern' (or from a result without a reliable match)."""
+        layout = self.layout_
+        auto = layout.tracks == default_tracks(
+            ref, self.project.infos, self.project.suggested_tracks
+        )
+        names = ", ".join(ref.track_label(t) for t in layout.tracks)
+        line = QHBoxLayout()
+        line.addWidget(_label(f"<b>Vergleichsspuren:</b> {names}"))
+        line.addWidget(_label("· automatisch gewählt" if auto else "· von Hand gewählt", "muted"))
+        line.addStretch()
+        if not auto:
+            reset = _small_button("Automatisch")
+            reset.clicked.connect(self.automatic_tracks)
+            line.addWidget(reset)
+        change = _small_button("Fertig" if self.compare_open else "Ändern …")
+        change.clicked.connect(self.toggle_compare)
+        line.addWidget(change)
+        self.tracks_box.addLayout(line)
+        if not self.compare_open:
+            return
+        self.tracks_box.addWidget(_label(
+            "Die Spuren, mit denen die anderen Geräte verglichen werden: am besten solche, die "
+            "ähnlich klingen wie sie (Raummikrofon, Summe). Jede Datei nimmt die passendste. "
+            "Nur ändern, wenn eine Datei keinen sicheren Treffer hat. Doppelklick benennt "
+            "eine Spur.", "muted"))  # fmt: skip
         chips = QWidget()
         flow = _Flow(chips)
-        choices = clip.tracks if multi else [c.tracks[0] for c in ref.clips]
         self.chips: dict[Path, Chip] = {}
-        for n, t in enumerate(choices, 1):
-            label = ref.track_label(t) if multi else t.name
-            text = f"{n}  {label}" if multi and label != str(n) else str(n) if multi else label
+        for n, t in enumerate(clip.tracks, 1):
+            label = ref.track_label(t)
+            text = f"{n}  {label}" if label != str(n) else str(n)
             chip = Chip(text)
             chip.setProperty("role", "chip")
             chip.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -649,20 +687,28 @@ class DevicesPage(QWidget):
             chip.setCheckable(True)
             chip.setChecked(t in layout.tracks)
             chip.clicked.connect(lambda _c=False, t=t: self.toggle_track(t))
-            if multi:
-                chip.rename.connect(lambda t=t, chip=chip: self.rename_track(t, chip))
+            chip.rename.connect(lambda t=t, chip=chip: self.rename_track(t, chip))
             flow.add(chip)
             self.chips[t] = chip
         flow.finish()
         self.tracks_box.addWidget(chips)
         self.chip_area = chips
-        listen_to = [t for t in choices if t in layout.tracks] + [
-            t for t in choices if t not in layout.tracks
-        ]
-        self.audition.set_tracks(
-            [(t, ref.track_label(t) if multi else t.name) for t in listen_to],
-            {t: infos[t].duration_s for t in choices if t in infos},
-        )
+
+    def toggle_compare(self) -> None:
+        self.compare_open = not self.compare_open
+        self.rebuild()
+
+    def automatic_tracks(self) -> None:
+        layout = self.layout_
+        ref = layout.devices[layout.reference]
+        layout.tracks = default_tracks(ref, self.project.infos, self.project.suggested_tracks)
+        self.rebuild()
+
+    def open_compare(self) -> None:
+        """From a result without a reliable match: the reference's comparison tracks, open."""
+        self.shown = self.layout_.devices[self.layout_.reference]
+        self.compare_open = True
+        self.rebuild()
 
     # --- actions ----------------------------------------------------------------------
     def show_device(self, d: devices.Device) -> None:
