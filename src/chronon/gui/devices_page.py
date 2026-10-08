@@ -36,7 +36,7 @@ from chronon.gui.audition import Audition, Overviews, Player
 from chronon.gui.project import Detector, Project
 
 DRAG_MIME = "application/x-chronon-device"
-COLUMNS = (34, 30, 0, 160, 96, 180, 112, 36)  # handle, radio, name, kind, rate, role, files, …
+COLUMNS = (34, 30, 0, 130, 80, 170, 100, 36)  # handle, radio, name, kind, rate, role, files, …
 
 
 # --- texts -------------------------------------------------------------------------------
@@ -300,10 +300,13 @@ class DevicesPage(QWidget):
 
         heading = QHBoxLayout()
         heading.addWidget(_label("1 · GERÄTE PRÜFEN, REFERENZ WÄHLEN", "section"))
-        heading.addStretch()
-        heading.addWidget(_label(
+        heading.addSpacing(24)
+        note = _label(
             "Namen und Reihenfolge gelten für Dateinamen und Timeline. Zeilen am Griff ziehen.",
-            "muted"))  # fmt: skip
+            "muted")  # fmt: skip
+        note.setWordWrap(True)
+        note.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        heading.addWidget(note, 1)
         inner = QWidget()
         inner.setObjectName("content")
         column = QVBoxLayout(inner)
@@ -601,8 +604,11 @@ class DevicesPage(QWidget):
             head = QHBoxLayout()
             head.addWidget(_label(f"2 · {shown.name}", "cardtitle"))
             head.addStretch()
-            head.addWidget(_label(
-                f"Referenz ist {ref.name}; ändern im Menü „…“ eines Geräts.", "muted"))  # fmt: skip
+            note = _label(f"Referenz ist {ref.name}; ändern im Menü „…“ eines Geräts.", "muted")
+            note.setWordWrap(True)
+            note.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            head.addSpacing(24)
+            head.addWidget(note, 1)
             self.tracks_box.addLayout(head)
             files = shown.files
             self.audition.set_tracks(
@@ -623,7 +629,11 @@ class DevicesPage(QWidget):
                 and layout.tracks == self.project.suggested_tracks
             ):
                 hint = f"Vorschlag: die lautesten Spuren, {len(layout.tracks)} gewählt. " + hint
-            head.addWidget(_label(hint, "muted"))
+            note = _label(hint, "muted")
+            note.setWordWrap(True)
+            note.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            head.addSpacing(24)
+            head.addWidget(note, 1)
         self.tracks_box.addLayout(head)
         chips = QWidget()
         flow = _Flow(chips)

@@ -180,6 +180,20 @@ Decided 2026-10-08 after the user tried the app on the real musical:
    checking together.
 10. **Rename (05):** a wide name field, no description.
 
+Decided 2026-10-08, second round:
+
+11. **Waveforms:** one filled shape in one colour (no lighter peak outline around a core: it
+    read as two tracks).
+12. **Devices (05):** the radio only picks the device section 2 shows and plays; the reference is
+    set with "Als Referenz verwenden" in the device's "…" menu and keeps its badge. Section 2
+    of another device: its files to listen to, no track chips.
+13. **Controls:** check boxes and radio buttons drawn clearly (border, accent fill with a white
+    check, accent border on hover); drop-downs flat like the inputs with a thin chevron; the
+    settings gear drawn large in its box.
+14. **macOS menu bar:** Chronon (Über, Einstellungen ⌘,, Beenden ⌘Q), Ablage, Bearbeiten,
+    Fenster, Hilfe; the app is called Chronon there also when started from the terminal.
+15. **Window:** at least 1150 × 720; every page fits at that size (long hints wrap).
+
 ## Not designed yet
 
 - Applying the appearance setting live (the row is designed, both themes exist).

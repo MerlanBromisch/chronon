@@ -40,8 +40,8 @@ class Window(QMainWindow):
     def __init__(self, appearance: str | None = None):
         super().__init__()
         self.setWindowTitle("Chronon")
-        self.setMinimumSize(1024, 700)
-        self.resize(1200, 780)
+        self.setMinimumSize(1150, 720)  # every page fits (checked at this size)
+        self.resize(1240, 800)
         self.appearance = appearance or settings.appearance()
         self.before_settings = 0
         self.tokens = dict(theme.TOKENS[theme.resolve(self.appearance)])
