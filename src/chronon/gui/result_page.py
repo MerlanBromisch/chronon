@@ -340,7 +340,7 @@ class ResultPage(QWidget):
         count = len(layout.devices)
 
         head = QHBoxLayout()
-        head.addWidget(status_square(not unsure))
+        head.addWidget(status_square(not unsure), 0, Qt.AlignmentFlag.AlignTop)
         head.addSpacing(12)
         titles = QVBoxLayout()
         titles.setSpacing(2)
@@ -351,6 +351,7 @@ class ResultPage(QWidget):
         titles.addWidget(label(title, "headline"))
         titles.addWidget(label(self._reference_text(), "hint"))
         head.addLayout(titles)
+        head.setAlignment(titles, Qt.AlignmentFlag.AlignTop)  # together, beside taller buttons
         head.addStretch()
         actions = QVBoxLayout()
         actions.setSpacing(6)
@@ -362,8 +363,8 @@ class ResultPage(QWidget):
         other = button("Andere Referenz wählen …")
         other.clicked.connect(self.other_reference.emit)
         actions.addWidget(other)
-        actions.addStretch()
         head.addLayout(actions)
+        head.setAlignment(actions, Qt.AlignmentFlag.AlignTop)
         self.column.addLayout(head)
         if unsure:
             self.column.addWidget(label(
