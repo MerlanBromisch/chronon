@@ -172,11 +172,17 @@ notes of older reports into `{"code": "text", "text": …}`.
    Resolve (#8) later.
 
 ## Packaging
-- PyInstaller, built by a GitHub Actions matrix (macOS arm64, Windows x64, Linux x64):
-  `.dmg` / `.zip`, a Windows `.zip` or simple installer, an AppImage.
-- ffmpeg: ship an LGPL build (we only decode).
-- **Unsigned.** The README explains how to open an unsigned app (macOS: right-click → Open,
-  or `xattr -dr com.apple.quarantine`; Windows: SmartScreen "More info → Run anyway").
+- PyInstaller, built by a GitHub Actions matrix (macOS arm64, Windows x64, Linux x64), one
+  `.zip` per system. `packaging/build.sh` writes the version (`chronon.__version__`) and the
+  bundle id `io.github.merlanbromisch.chronon` into the Mac app's Info.plist and signs it ad
+  hoc; an icon in `packaging/icon/` (`Chronon.icns`, `Chronon.ico`) is used when present.
+- Releases: a tag `vX.Y.Z` (`vX.Y.Z-rcN` = pre-release) builds, self-tests and publishes the
+  three zips as a GitHub Release (`.github/workflows/app.yml`, job `release`).
+- ffmpeg: the static executables, LGPL on Windows / Linux, GPL on macOS (no LGPL download
+  exists for arm64; see the spike's findings below).
+- **Unsigned.** The README ("Install") explains how to open the apps the first time (macOS:
+  System Settings → Privacy & Security → Open Anyway; Windows: SmartScreen "More info → Run
+  anyway").
   If signing is ever needed: Apple Developer account for notarization; SignPath.io offers free
   code signing for open-source projects on Windows.
 - No auto-updater. At most a "new version available" hint from GitHub Releases, later.
@@ -250,8 +256,9 @@ Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python 
   `devices.Layout` through its methods (`move_device`, `move_files`, `merge`), which keep the
   reference and the suggestion on their devices. Rename in place, reorder
   by the grip or the row menu, regroup clips (multitrack devices are disabled targets),
-  reference device by its radio, reference tracks as chips (double click names one), and the
-  audition of a reference track.
+  the radio picks the device section 2 shows and plays; the reference is set in a device's "…"
+  menu; a desk's "Vergleichsspuren" in one line, as chips after "Ändern …" (double click names
+  one); the audition of the shown device's files.
 - `audition.py`: `Waveform` (a whole overview, one column per pixel on a dB scale, cursor, click
   to seek, "being computed" with its share), `Player` (QtMultimedia pulling one continuous
   stereo float stream that a thread decodes ~12 s ahead from a source function), `Overviews`

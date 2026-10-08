@@ -1,12 +1,12 @@
-# Handoff (2026-10-07)
+# Handoff (2026-10-08)
 
 For the next Claude session (cloud). State of the work, how the user works, and what comes next.
 Read `CLAUDE.md`, `ROADMAP.md`, `docs/app.md` and `docs/design/gaps.md` first. Update or delete
 this file when it is out of date.
 
 ## Where things stand
-- `main` (`babc174`) holds everything merged; no open PRs. Remote branches other than `main` and
-  `spike/packaging` are merged leftovers and can be deleted.
+- `main` holds everything merged; version 1.0.0rc1 (release candidate). The user tests the app
+  in real use (`~/Applications/Chronon.app` on their Mac, a CI build of main).
 - **Core** (Python, `src/chronon/`):
   - `chronon devices` detects devices before a reference exists and suggests one; the result is
     an editable layout JSON (`devices.Layout`).
@@ -40,15 +40,19 @@ this file when it is out of date.
   whole flow; the app build (on demand and for `v*` tags) runs it as a self test on all three
   platforms.
 - **Design**: finished. Boards in `docs/design/ui/png/{dark,light}`, spec in `docs/design/ui/README.md`
-  (read its "Corrections to the boards" section: the timeline row is a format choice, multitrack
-  devices are disabled targets in the move / merge dialogs, parallel-track output names).
+  (read its "Corrections to the boards" section, items 1–18: they override the boards, e.g. the
+  editor-like timeline, whole-file waveforms, the reference as a device, Vergleichsspuren).
   Decisions with reasons: `docs/design/gaps.md` ("Decided 2026-10-07").
 
 ## Next steps (in order)
-1. **The user tests the app** on real material (the musical, the interview) and reports what is
-   wrong or awkward; fix that first. Playback could not be heard in the cloud (no audio device).
-2. Later, only with a reason: a project file to reopen a session; bundle IBM Plex; issues #5,
-   #7 (Premiere), #8 (Resolve), #11, #15.
+1. **The user tests the app in real use** and sends feedback in rounds: collect a round, then fix
+   it in one pass (one PR). Fix their findings first.
+2. **App icon:** drafts A–E (a clock, in the app's colours) in `~/Documents/Chronon Test/
+   Icon-Entwürfe/`; once the user picks one, make `packaging/icon/Chronon.icns` and `.ico`.
+3. **Release:** when the user says so, tag `v1.0.0-rc1` on main (the release job is untested
+   until the first tag; check the run and the release page).
+4. Later, only with a reason: #34 (save and reopen a project), bundle IBM Plex, #5, #7, #8,
+   #11, #15.
 
 ## How the user works
 - Replies in German; code, comments, docs in English. Short answers, a recommendation rather
