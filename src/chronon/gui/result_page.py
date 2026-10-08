@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter
+import numpy as np
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QScrollArea,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
-from chronon.gui import texts, theme
+from chronon.gui import fmt, texts, theme
+from chronon.gui.audition import Overviews, columns
 from chronon.gui.project import Project
 from chronon.gui.widgets import badge, button, card, label, status_square
 
@@ -34,9 +38,24 @@ def clock_ms(seconds: float) -> str:
     return f"{sign}{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}.{ms:03d}"
 
 
+@dataclass
+class Region:
+    """A clip on the timeline: where it sits, its file (the track its waveform shows), its
+    name, its verdict."""
+
+    start: float
+    length: float
+    path: Path
+    verdict: str  # ref, ok, wanders, unsure
+    drift_ppm: float | None = None
+    name: str = ""
+
+
+@dataclass
 class Lane:
-    def __init__(self, name: str, bars: list[tuple[float, float]], reference: bool):
-        self.name, self.bars, self.reference = name, bars, reference
+    name: str
+    regions: list[Region]
+    reference: bool
 
 
 def lanes(project: Project) -> tuple[list[Lane], float]:
@@ -48,103 +67,232 @@ def lanes(project: Project) -> tuple[list[Lane], float]:
     infos = project.infos
     out, end = [], 0.0
     for k, d in enumerate(layout.devices):
-        bars = []
+        regions = []
         for clip in d.clips:
             f = clip.tracks[0]
             r = rows.get(f)
+            # parallel tracks: named by their count, drawn with the track that was measured
+            # (the reference: its first chosen track)
+            many = len(clip.tracks) > 1
+            name = f"{len(clip.tracks)} Spuren" if many else f.name
+            chosen = [t for t in clip.tracks if t in layout.tracks]
             if r is not None:
                 start, length = r["placement"]["position_s"], r["placement"]["duration_s"]
+                verdict = "ref" if r.get("is_reference") else texts.verdict(r)
+                shown = Path(chosen[0] if chosen else r.get("via") or f)
+                regions.append(Region(start, length, shown, verdict, r.get("drift_ppm"), name))
             elif f in infos:  # a reference track: on the reference clock
                 start, length = -zero, infos[f].duration_s
+                regions.append(Region(start, length, chosen[0] if chosen else f, "ref", None, name))
             else:
                 continue
-            bars.append((start, length))
             end = max(end, start + length)
-        out.append(Lane(d.name, bars, k == layout.reference))
+        out.append(Lane(d.name, regions, k == layout.reference))
     return out, end
 
 
 class Timeline(QWidget):
-    """Lanes per device, view only (board 08)."""
+    """The devices' clips the way an editor shows them (board 08, redrawn): a ruler with
+    major and minor ticks, a lane per device, each clip a region with its file name in a
+    header strip and its waveform inside (once the overview is computed). View only; a
+    tooltip tells a region's file, span and drift."""
 
-    LANE = 35
-    LEFT = 200
+    RULER = 26
+    LANE = 52
+    LEFT = 150
 
-    def __init__(self, tokens: dict[str, str]):
+    def __init__(self, tokens: dict[str, str], overviews: Overviews | None = None):
         super().__init__()
         self.tokens = tokens
+        self.overviews = overviews
         self.lanes: list[Lane] = []
         self.total = 0.0
+        self.waves: dict[tuple[Path, int], np.ndarray] = {}  # (file, width) -> columns
+        self.setMouseTracking(True)
+        if overviews is not None:
+            overviews.stored.connect(self._stored)
 
     def set_lanes(self, lanes: list[Lane], total: float) -> None:
         self.lanes, self.total = lanes, total
-        self.setFixedHeight(30 + self.LANE * len(lanes))
+        self.setFixedHeight(self.RULER + self.LANE * len(lanes) + 1)
         self.update()
 
-    def paintEvent(self, event):  # noqa: N802 (Qt API)
+    def _stored(self, path: Path) -> None:
+        if any(r.path == path for lane in self.lanes for r in lane.regions):
+            self.update()
+
+    # --- geometry -----------------------------------------------------------------------
+    def _x(self, seconds: float) -> float:
+        width = self.width() - self.LEFT
+        return self.LEFT + width * seconds / self.total if self.total else self.LEFT
+
+    def _region_rect(self, k: int, r: Region) -> QRectF:
+        top = self.RULER + k * self.LANE
+        x0 = self._x(max(r.start, 0.0))
+        x1 = max(self._x(r.start + r.length), x0 + 3)
+        return QRectF(x0 + 0.5, top + 5, x1 - x0 - 1, self.LANE - 10)
+
+    def _region_at(self, x: float, y: float) -> Region | None:
+        for k, lane in enumerate(self.lanes):
+            for r in lane.regions:
+                if self._region_rect(k, r).contains(x, y):
+                    return r
+        return None
+
+    def mouseMoveEvent(self, event):  # noqa: N802 (Qt API)
+        r = self._region_at(event.position().x(), event.position().y())
+        if r is None:
+            QToolTip.hideText()
+            return
+        title = f"{r.name} · {r.path.name}" if r.name and r.name != r.path.name else r.path.name
+        tip = f"{title}\n{fmt.duration(max(r.start, 0))} – {fmt.duration(r.start + r.length)}"
+        if r.verdict != "ref":
+            tip += f"\n{texts.VERDICTS.get(r.verdict, '')}"
+            if r.drift_ppm is not None:
+                tip += f" · Drift {ppm(r.drift_ppm)}"
+        else:
+            tip += "\nReferenz"
+        QToolTip.showText(event.globalPosition().toPoint(), tip, self)
+
+    # --- drawing ------------------------------------------------------------------------
+    def paintEvent(self, event):  # noqa: N802
         t = self.tokens
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        width = self.width() - self.LEFT
-        if self.total <= 0 or width <= 0:
+        if self.total <= 0 or self.width() <= self.LEFT:
+            p.end()
             return
-        mono = theme.mono_font(11)
-        p.setFont(mono)
-        p.setPen(QColor(t["text2"]))
-        step = _tick(self.total)
-        x = 0.0
-        while x <= self.total + 1e-6:
-            px = self.LEFT + width * x / self.total
-            text = _axis(x, self.total)
-            align = (
-                Qt.AlignmentFlag.AlignRight if x > self.total * 0.95 else Qt.AlignmentFlag.AlignLeft
-            )
-            p.drawText(QRectF(px - (60 if x > self.total * 0.95 else 0), 0, 60, 20),
-                       align | Qt.AlignmentFlag.AlignVCenter, text)  # fmt: skip
-            x += step
+        self._ruler(p)
         name_font = QFont(self.font())
+        name_font.setPixelSize(13)
         for k, lane in enumerate(self.lanes):
-            top = 30 + k * self.LANE
+            top = self.RULER + k * self.LANE
+            if k % 2:
+                p.fillRect(QRectF(0, top, self.width(), self.LANE), QColor(t["table_header"]))
             p.setPen(QColor(t["divider"]))
-            p.drawLine(0, top, self.width(), top)
+            p.drawLine(QPointF(0, top + self.LANE), QPointF(self.width(), top + self.LANE))
             name_font.setBold(lane.reference)
             p.setFont(name_font)
             p.setPen(QColor(t["text"]))
-            p.drawText(QRectF(0, top, self.LEFT - 10, self.LANE),
+            p.drawText(QRectF(10, top, self.LEFT - 20, self.LANE),
                        Qt.AlignmentFlag.AlignVCenter, lane.name)  # fmt: skip
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(t["input"]))
-            p.drawRect(QRectF(self.LEFT, top + 9, width, self.LANE - 18))
-            p.setBrush(QColor(t["accent"] if lane.reference else t["wave"]))
-            for start, length in lane.bars:
-                x0 = self.LEFT + width * max(start, 0) / self.total
-                w = max(width * length / self.total, 2)
-                p.drawRoundedRect(QRectF(x0, top + 11, w, self.LANE - 22), 2, 2)
+            for r in lane.regions:
+                self._region(p, self._region_rect(k, r), r)
+        p.setPen(QColor(t["divider"]))
+        p.drawLine(QPointF(self.LEFT, 0), QPointF(self.LEFT, self.height()))
         p.end()
 
+    def _ruler(self, p: QPainter) -> None:
+        t = self.tokens
+        p.fillRect(QRectF(self.LEFT, 0, self.width() - self.LEFT, self.RULER),
+                   QColor(t["table_header"]))  # fmt: skip
+        p.setPen(QColor(t["divider"]))
+        p.drawLine(QPointF(0, self.RULER), QPointF(self.width(), self.RULER))
+        width = self.width() - self.LEFT
+        major, minor = ruler_steps(self.total, width)
+        p.setFont(theme.mono_font(10))
+        count = int(self.total // minor) + 1
+        for n in range(count):
+            x_s = n * minor
+            px = self._x(x_s)
+            is_major = n % round(major / minor) == 0
+            p.setPen(QColor(t["text3"] if not is_major else t["text2"]))
+            h = 9 if is_major else 4
+            p.drawLine(QPointF(px, self.RULER - h), QPointF(px, self.RULER))
+            if is_major and px + 60 < self.width():
+                p.setPen(QColor(t["text2"]))
+                p.drawText(QRectF(px + 3, 2, 80, self.RULER - 10),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                           ruler_label(x_s, self.total))  # fmt: skip
 
-def _axis(x: float, total: float) -> str:
-    """Hours and minutes on long timelines, minutes and seconds on short ones."""
-    s = round(x)
+    def _region(self, p: QPainter, rect: QRectF, r: Region) -> None:
+        t = self.tokens
+        color = QColor(t["accent"] if r.verdict == "ref" else t["region"])
+        body = QColor(color)
+        body.setAlphaF(0.22)
+        p.setPen(
+            QPen(color, 1, Qt.PenStyle.DashLine if r.verdict == "unsure" else Qt.PenStyle.SolidLine)
+        )
+        p.setBrush(body)
+        p.drawRoundedRect(rect, 3, 3)
+        strip = QRectF(rect.left(), rect.top(), rect.width(), min(15.0, rect.height()))
+        if rect.width() > 6:
+            path = QPainterPath()
+            path.addRoundedRect(strip, 3, 3)
+            path.addRect(strip.adjusted(0, 6, 0, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            p.drawPath(path.simplified())
+            label_font = QFont(self.font())
+            label_font.setPixelSize(10)
+            label_font.setWeight(QFont.Weight.DemiBold)
+            p.setFont(label_font)
+            p.setPen(QColor(t["on_accent"]))
+            mark = {"wanders": "⚠ ", "unsure": "? "}.get(r.verdict, "")
+            text = p.fontMetrics().elidedText(mark + (r.name or r.path.name),
+                                               Qt.TextElideMode.ElideRight,
+                                               int(strip.width() - 8))  # fmt: skip
+            p.drawText(strip.adjusted(4, 0, -4, 0), Qt.AlignmentFlag.AlignVCenter, text)
+        wave_box = QRectF(rect.left() + 1, strip.bottom() + 2, rect.width() - 2,
+                          rect.bottom() - strip.bottom() - 4)  # fmt: skip
+        n = int(wave_box.width())
+        if n < 4 or wave_box.height() < 6 or self.overviews is None:
+            return
+        cols = self._wave(r.path, n)
+        if cols is None:
+            return
+        _lo, hi, _core = cols
+        mid, half = wave_box.center().y(), wave_box.height() / 2
+        xs = wave_box.left() + np.arange(n) + 0.5
+        shape = QPolygonF(
+            [QPointF(x, mid - half * v) for x, v in zip(xs, hi, strict=True)]
+            + [QPointF(x, mid + half * v) for x, v in zip(xs[::-1], hi[::-1], strict=True)]
+        )
+        p.setPen(Qt.PenStyle.NoPen)
+        wave = QColor(color)
+        wave.setAlphaF(0.75)
+        p.setBrush(wave)
+        p.drawPolygon(shape)
+
+    def _wave(self, path: Path, n: int):
+        key = (path, n)
+        if key not in self.waves:
+            assert self.overviews is not None
+            peaks = self.overviews.peek(path)
+            if peaks is None:
+                return None
+            self.waves[key] = columns(np.asarray(peaks, dtype=np.float32) / 127, n)
+        return self.waves[key]
+
+
+def ruler_steps(total: float, width: float) -> tuple[float, float]:
+    """A labelled (major) and a tick (minor) step in seconds, labels at least ~90 px apart."""
+    steps = (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200)
+    minors = {1: 0.2, 2: 0.5, 5: 1, 10: 2, 15: 5, 30: 5, 60: 10, 120: 30, 300: 60, 600: 120,
+              900: 300, 1800: 300, 3600: 600, 7200: 1800}  # fmt: skip
+    for step in steps:
+        if width * step / total >= 90:
+            return step, minors[step]
+    return 14400, 3600
+
+
+def ruler_label(seconds: float, total: float) -> str:
+    """``1:20:00`` on a long timeline, ``20:00`` / ``0:20`` on short ones, like an editor."""
+    s = round(seconds)
     if total >= 3600:
-        return f"{s // 3600}:{s // 60 % 60:02d}"
+        return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}"
     return f"{s // 60}:{s % 60:02d}"
-
-
-def _tick(total: float) -> float:
-    for step in (10, 30, 60, 300, 600, 1800, 3600, 7200):
-        if total / step <= 6:
-            return step
-    return 14400
 
 
 class ResultPage(QWidget):
     changed = Signal()
     other_reference = Signal()
 
-    def __init__(self, project: Project, tokens: dict[str, str]):
+    def __init__(
+        self, project: Project, tokens: dict[str, str], overviews: Overviews | None = None
+    ):
         super().__init__()
-        self.project, self.tokens = project, tokens
+        self.project, self.tokens, self.overviews = project, tokens, overviews
         self.details_open = False
         inner = QWidget()
         inner.setObjectName("content")
@@ -213,7 +361,7 @@ class ResultPage(QWidget):
         line.addWidget(label("TIMELINE · NUR ANSEHEN", "section"))
         line.addStretch()
         box.addLayout(line)
-        timeline = Timeline(self.tokens)
+        timeline = Timeline(self.tokens, self.overviews)
         all_lanes, total = lanes(project)
         timeline.set_lanes(all_lanes, total)
         box.addWidget(timeline)

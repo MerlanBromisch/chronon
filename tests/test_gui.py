@@ -269,6 +269,13 @@ def test_the_whole_app_from_files_to_export(app, tmp_path, monkeypatch):
 
     # what the steps show on the way
     assert win.result.ready and win.listen.rows and win.export.outcome["failed"] == 0
+    # the result's timeline: a lane per device, a region per clip, named by its file
+    from chronon.gui.result_page import lanes
+
+    timeline_lanes, total = lanes(win.project)
+    assert [lane.name for lane in timeline_lanes] == ["cam", "phone", "rec"]
+    assert [r.name for r in timeline_lanes[0].regions] == ["cam_01.wav", "cam_02.wav"]
+    assert total > 0 and timeline_lanes[2].regions[0].verdict == "ref"
     # listening shows the whole file, the reference for the same time; a click moves there
     listen_ = win.listen
     start, end = listen_.span
@@ -430,3 +437,13 @@ def test_overviews_compute_two_at_a_time_and_what_is_shown_first(app, tmp_path, 
     assert o.get(files[4]) is None  # shown now: ahead of the rest
     o._failed(files[0])
     assert started == ["a.wav", "b.wav", "e.wav"]
+
+
+def test_the_result_ruler_labels_like_an_editor():
+    from chronon.gui.result_page import ruler_label, ruler_steps
+
+    major, minor = ruler_steps(4 * 3600, 800)  # a 4 h project on 800 px
+    assert major == 1800 and 800 * major / (4 * 3600) >= 90 and major % minor == 0
+    assert ruler_label(5400, 4 * 3600) == "1:30:00"
+    assert ruler_label(75, 300) == "1:15"
+    assert ruler_steps(60, 1000) == (10, 2)

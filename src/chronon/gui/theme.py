@@ -24,6 +24,7 @@ TOKENS = {
         "wave": "#6E727A",
         "accent": "#6AA7F5",
         "on_accent": "#0E1114",
+        "region": "#5DBFAE",  # clips of the other devices on the result's timeline
         "green": "#8FD6A9",
         "green_border": "#3F7A58",
         "amber": "#F0C06A",
@@ -49,6 +50,7 @@ TOKENS = {
         "wave": "#8E939B",
         "accent": "#2F7DE1",
         "on_accent": "#FFFFFF",
+        "region": "#2B8C7E",  # clips of the other devices on the result's timeline
         "green": "#1F7A47",
         "green_border": "#86C3A0",
         "amber": "#8A5A00",

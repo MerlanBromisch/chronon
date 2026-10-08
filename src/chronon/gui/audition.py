@@ -317,6 +317,7 @@ class Overviews(QObject):
 
     ready = Signal(object, object)  # path, peaks (int8 array)
     progress = Signal(object, float)  # path, share computed
+    stored = Signal(object)  # path: its overview is in the disk cache now (asked or ahead)
 
     RUNNING = 2
 
@@ -378,8 +379,22 @@ class Overviews(QObject):
             self.jobs[path] = job
             job.start()
 
+    def peek(self, path: Path) -> np.ndarray | None:
+        """The overview if it is already computed, without computing it; from the disk cache
+        memory-mapped (for small views of many files, e.g. the result's timeline)."""
+        if path in self.memory:
+            return self.memory[path]
+        cached = self._cached(path)
+        if cached is None or not cached.exists():
+            return None
+        try:
+            return np.load(cached, mmap_mode="r")
+        except (OSError, ValueError):
+            return None
+
     def _done(self, path: Path, event: dict) -> None:
         self.jobs.pop(path, None)
+        self.stored.emit(path)
         if path in self.asked:  # computed ahead only: it waits in the disk cache
             self.asked.discard(path)
             self.memory[path] = np.load(event["files"][0]["overview"])

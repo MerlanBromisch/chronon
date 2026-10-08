@@ -95,7 +95,7 @@ class Window(QMainWindow):
         self.sync.changed.connect(self.update_chrome)
         self.sync.finished.connect(lambda: self.show_step(3))
         self.sync.finished.connect(self._prefetch_waves)
-        self.result = ResultPage(self.project, self.tokens)
+        self.result = ResultPage(self.project, self.tokens, self.overviews)
         self.result.changed.connect(self.update_chrome)
         self.result.other_reference.connect(lambda: self.show_step(1))
         self.listen = ListenPage(self.project, self.tokens, self.player, self.overviews)
