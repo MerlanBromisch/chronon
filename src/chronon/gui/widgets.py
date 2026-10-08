@@ -17,6 +17,11 @@ from PySide6.QtWidgets import (
 from chronon.gui import texts
 
 
+def percent(fraction: float) -> int:
+    """What the bar says while a job runs: never 100 % before its result is in."""
+    return min(int(100 * max(fraction, 0.0)), 99)
+
+
 def label(text: str = "", name: str = "", wrap: bool = False) -> QLabel:
     w = QLabel(text)
     if name:

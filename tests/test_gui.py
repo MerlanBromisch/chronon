@@ -344,3 +344,17 @@ def test_choosing_sync_unchecks_korrigiert(app):
     assert not page.correct_choice.radio.isChecked()
     assert not page.corrected.isVisibleTo(page)  # the corrected-audio rows go away
     win.close()
+
+
+def test_progress_says_100_only_when_done(app):
+    win = Window(appearance="light")
+    page = win.export
+    page._plan([{"id": "writing", "kind": "write"}, {"id": "verifying", "kind": "verify"}])
+    page._progress({"task": "writing", "done": 1.0})
+    assert page.percent.text() == "90 %"  # writing done, the check still to come
+    page._progress({"task": "verifying", "done": 1.0})
+    assert page.percent.text() == "99 %"  # 100 % only with the result
+    win.sync._plan([{"id": "drift", "kind": "drift", "device": None}])
+    win.sync._progress({"task": "drift", "done": 1.0})
+    assert win.sync.number.text() == "99 %"
+    win.close()

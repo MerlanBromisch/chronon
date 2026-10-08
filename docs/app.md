@@ -79,7 +79,8 @@ Version 1 had English sentences in both.
   analysed; its work is credited to its own step, which can start at more than 0), the coarse
   search and the measurement count window by window. `done` stays 0 until the files' lengths
   are read, and never goes back: work nobody foresaw (a further reference track, a clip
-  linked through another) makes it hold still. At most ten events a second, but the first
+  linked through another) slows it down (the rest of the bar stands for the rest of the work).
+  The app shows at most 99 % until the `result` arrives. At most ten events a second, but the first
   event of each task always goes out.
 - `result` (exactly one, last, on success): `files` are the same rows as the report file —
   `analyze`: offset, drift, confidence, `reliable`, windows, `via` / `drift_from` /
