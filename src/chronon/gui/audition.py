@@ -299,8 +299,9 @@ class Audition(QWidget):
         self.player.stop()
         self.index = k % len(self.tracks)
         path, label = self.tracks[self.index]
+        name = f"SPUR {label}" if label.isdigit() else f"„{label.upper()}“"
         self.title.setText(
-            f"VORHÖREN · SPUR {self.index + 1} „{label.upper()}“ VON {len(self.tracks)}"
+            f"VORHÖREN · {name} · {self.index + 1} VON {len(self.tracks)}"
             if len(self.tracks) > 1 else f"VORHÖREN · {label.upper()}"
         )  # fmt: skip
         self.prev.setVisible(len(self.tracks) > 1)
