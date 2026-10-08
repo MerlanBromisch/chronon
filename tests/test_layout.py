@@ -55,7 +55,6 @@ def _layout() -> devices.Layout:
 
 def test_layout_round_trip(tmp_path):
     layout = _layout()
-    layout.devices[0].description = "Mischpult"
     layout.devices[0].track_names = {"/a/2.wav": "Summe"}
     loaded = devices.Layout.load(layout.save(tmp_path / "d.json"))
     assert loaded.to_dict() == layout.to_dict()
@@ -182,3 +181,9 @@ def test_merging_into_the_reference_keeps_it():
     layout.merge(1, 2, "Alles")  # the reference device itself goes into another one
     assert layout.devices[layout.reference].name == "Alles"
     layout.check()
+
+
+def test_a_layout_with_the_old_device_description_still_loads(tmp_path):
+    data = _layout().to_dict()
+    data["devices"][0]["description"] = "Mischpult"  # written before the field went away
+    assert devices.Layout.from_dict(data).to_dict() == _layout().to_dict()

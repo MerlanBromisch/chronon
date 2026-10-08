@@ -188,10 +188,10 @@ def test_devices_step_edits_the_layout(app, tmp_path):
     assert win.main.text() == "Sync starten" and win.main.isEnabled()
     assert win.header_right.text() == "4 Dateien · 3 Geräte"
 
-    # rename with a description; a taken name is refused
+    # rename; a taken name is refused
     page.start_rename(layout.devices[0])
     assert page.editing is layout.devices[0]
-    layout.devices[0].name, layout.devices[0].description = "Kamera", "Sony"
+    layout.devices[0].name = "Kamera"
     page.editing = None
     page.rebuild()
 

@@ -90,7 +90,7 @@ Version 1 had English sentences in both.
   `chronon-sync.json` rows; `correct`: the `chronon-report.json` rows, `timeline` null with
   `--timeline none`. `correct` exits 1 when `failed` > 0.
 - **Devices first:** `chronon devices --json FILE...` → `result` with `layout` (the
-  editable device layout: `devices` in timeline order with `name`, `description`, `clips`
+  editable device layout: `devices` in timeline order with `name`, `clips`
   (lists of parallel tracks), `track_names`; `reference`, `reference_tracks`, `suggested`) and
   `devices` (per device `kind` = tracks / clips / video_clips / file / video, `clips`,
   `tracks`, `files`, `sample_rate`, `channels`, `duration_s`, `has_video`) and `files` (the
@@ -247,7 +247,7 @@ Install with `uv sync --extra gui`, start with `uv run chronon-app` (or `python 
 - `devices_page.py`: step 2 (boards 05–05c). `devices.detect` runs on a thread with the infos
   of step 1 (it only reads levels for the suggestion); the page edits the project's
   `devices.Layout` through its methods (`move_device`, `move_files`, `merge`), which keep the
-  reference and the suggestion on their devices. Rename (name + description) in place, reorder
+  reference and the suggestion on their devices. Rename in place, reorder
   by the grip or the row menu, regroup clips (multitrack devices are disabled targets),
   reference device by its radio, reference tracks as chips (double click names one), and the
   audition of a reference track.

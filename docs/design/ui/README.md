@@ -20,7 +20,7 @@ load them first (the prototype uses sample data).
 | 02-files-reading | Intermediate state while the files are probed ("23 / 56") |
 | 03-files-loaded | Flat file list: name, duration, sample rate, channels, start time |
 | 04-files-unreadable-dialog | Modal "Datei nicht lesbar" with the ffmpeg message |
-| 05-devices-reference | Device list (rename inline with optional description, reorder by the drag handle, pick the reference; "Vorschlag" marks the suggestion), then reference tracks (nameable), then audition |
+| 05-devices-reference | Device list (rename inline, reorder by the drag handle, pick the reference; "Vorschlag" marks the suggestion), then reference tracks (nameable), then audition |
 | 05a-devices-regroup | A device's files opened: select files, then "In Gerät verschieben …" or "Als neues Gerät abtrennen" (the file menu shows the same two) |
 | 05b-devices-move-dialog | Dialog "Datei verschieben": pick a device or "Neues Gerät" with a name |
 | 05c-devices-merge-dialog | Dialog "Geräte zusammenführen" (row menu "…"), with the name after merging |
@@ -122,8 +122,8 @@ Fonts: IBM Plex Sans (UI) and IBM Plex Mono (numbers, times, paths). Sizes: 22/6
   shows them. Most users only need "synced".
 - Reference choice is prominent (step 2): device first, then its tracks, with an audition
   (waveform, play/pause, −1 min / −10 s / +10 s / +1 min, slider).
-- Devices: names and order are edited in place. Click a name to rename (name + optional
-  description, "OK"); the grip moves a row up (drag and drop in Qt). The order is the lane order
+- Devices: names and order are edited in place. Click a name to rename (a wide name
+  field, "OK"; no description: it ended up nowhere); the grip moves a row up (drag and drop in Qt). The order is the lane order
   in the timeline and export. Files are shown per device on demand ("Dateien"); with 56 files and
   5 devices all devices stay collapsed except the one being edited. Only devices of clips can be
   regrouped or merged; multitrack devices keep their tracks together.
