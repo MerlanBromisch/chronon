@@ -495,18 +495,19 @@ class ExportPage(QWidget):
             if corrected:
                 name = Path(r["path"]).name
                 state = r.get("verified")
-                tag = (badge("ref", "Referenz") if r.get("is_reference")
-                       else badge("unsure") if not r.get("reliable", True)
-                       else badge("ok", "geprüft") if state
-                       else badge("bad", "Prüfung fehlgeschlagen") if state is False
-                       else badge("unsure", "nicht geprüft"))  # fmt: skip
+                tag = (badge("ref", "Referenz", "export") if r.get("is_reference")
+                       else badge("unsure", group="export") if not r.get("reliable", True)
+                       else badge("ok", "geprüft", "export") if state
+                       else badge("bad", "Prüfung fehlgeschlagen", "export") if state is False
+                       else badge("unsure", "nicht geprüft", "export"))  # fmt: skip
             else:
                 name = Path(r["source"]).name
-                tag = badge("ok", "platziert") if r.get("reliable") else badge("unsure")
+                tag = (badge("ok", "platziert", "export") if r.get("reliable")
+                       else badge("unsure", group="export"))  # fmt: skip
             skip = ("reference_clock", "matched_track", "verification_failed",
                     "verification_failed_via")  # fmt: skip
             grid.addWidget(label(name, "mono"), k, 0)
-            grid.addWidget(tag, k, 1, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(tag, k, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(label(texts.notes(r.get("notes", []), skip), "muted", wrap=True), k, 2)
         self.outcome_box.addWidget(frame)
         show = button(file_manager())

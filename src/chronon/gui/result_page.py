@@ -19,6 +19,8 @@ from chronon.gui import texts, theme
 from chronon.gui.project import Project
 from chronon.gui.widgets import badge, button, card, label, status_square
 
+LEFT_MIDDLE = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+
 
 def ppm(value: float) -> str:
     return f"{value:+.2f} ppm".replace("-", "−").replace(".", ",")
@@ -257,7 +259,7 @@ class ResultPage(QWidget):
                 grid.addWidget(label(f"<b>{d.name}</b>"), row, 0)
                 grid.addWidget(label("–", "mono"), row, 1)
                 grid.addWidget(label("Referenz", "mono"), row, 2)
-                grid.addWidget(badge("ref", "Referenz"), row, 3, Qt.AlignmentFlag.AlignLeft)
+                grid.addWidget(badge("ref", "Referenz"), row, 3, LEFT_MIDDLE)
                 grid.addWidget(label("–"), row, 4)
                 grid.addWidget(label(self._reference_text().split(" · ", 1)[1], wrap=True), row, 5)
                 row += 1
@@ -267,7 +269,7 @@ class ResultPage(QWidget):
                 grid.addWidget(label(f"<b>{d.name}</b> · {Path(r['file']).name}"), row, 0)
                 grid.addWidget(label(clock_ms(r["placement"]["position_s"]), "mono"), row, 1)
                 grid.addWidget(label(ppm(r["drift_ppm"]), "mono"), row, 2)
-                grid.addWidget(badge(texts.verdict(r)), row, 3, Qt.AlignmentFlag.AlignLeft)
+                grid.addWidget(badge(texts.verdict(r)), row, 3, LEFT_MIDDLE)
                 grid.addWidget(label(f"{round(100 * r['confidence'])} %"), row, 4)
                 grid.addWidget(label(hint(r), wrap=True), row, 5)
                 row += 1

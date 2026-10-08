@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -53,16 +53,99 @@ def rule() -> QFrame:
     return line
 
 
-BADGE_ICONS = {"ok": "✓", "wanders": "⚠", "unsure": "○", "ref": "✓", "bad": "!"}
+class Icon(QLabel):
+    """A small drawn symbol in the widget's text colour (glyphs like ✓ depend on the font and
+    looked like a root sign): check, warn, circle, bang, dot."""
+
+    def __init__(self, shape: str, size: int = 13):
+        super().__init__()
+        self.shape = shape
+        self.setFixedSize(size, size)
+
+    def set_shape(self, shape: str) -> None:
+        self.shape = shape
+        self.update()
+
+    def paintEvent(self, event):  # noqa: N802 (Qt API)
+        paint_icon(self, self.shape, QRectF(self.rect()))
 
 
-def badge(kind: str, text: str | None = None) -> QLabel:
-    """A verdict badge (README "Badge"): ok / wanders / unsure / ref / bad."""
-    text = text if text is not None else texts.VERDICTS.get(kind, kind)
-    w = QLabel(f"{BADGE_ICONS.get(kind, '')}  {text}".strip())
-    w.setObjectName(f"badge_{kind}")
-    w.setSizePolicy(w.sizePolicy().horizontalPolicy(), w.sizePolicy().verticalPolicy())
-    return w
+def paint_icon(widget: QWidget, shape: str, box: QRectF) -> None:
+    if not shape:
+        return
+    p = QPainter(widget)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    color = widget.palette().color(QPalette.ColorRole.WindowText)
+    s = min(box.width(), box.height())
+    box = QRectF(box.center().x() - s / 2, box.center().y() - s / 2, s, s)
+    pen = QPen(color, max(1.4, s / 8), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+               Qt.PenJoinStyle.RoundJoin)  # fmt: skip
+    p.setPen(pen)
+
+    def at(x: float, y: float) -> QPointF:
+        return QPointF(box.left() + x * s, box.top() + y * s)
+
+    if shape == "check":
+        path = QPainterPath(at(0.16, 0.54))
+        path.lineTo(at(0.40, 0.76))
+        path.lineTo(at(0.86, 0.26))
+        p.drawPath(path)
+    elif shape == "warn":
+        path = QPainterPath(at(0.5, 0.10))
+        path.lineTo(at(0.94, 0.88))
+        path.lineTo(at(0.06, 0.88))
+        path.closeSubpath()
+        p.drawPath(path)
+        p.drawLine(at(0.5, 0.40), at(0.5, 0.60))
+        p.drawPoint(at(0.5, 0.74))
+    elif shape == "circle":
+        p.drawEllipse(at(0.5, 0.5), 0.36 * s, 0.36 * s)
+    elif shape == "bang":
+        p.drawLine(at(0.5, 0.16), at(0.5, 0.60))
+        p.drawPoint(at(0.5, 0.82))
+    elif shape == "dot":
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        p.drawEllipse(at(0.5, 0.5), 0.2 * s, 0.2 * s)
+    p.end()
+
+
+BADGE_ICONS = {"ok": "check", "wanders": "warn", "unsure": "circle", "ref": "check", "bad": "bang"}
+# badges of one kind of list share one size: the verdicts, and the export's outcome
+BADGE_TEXTS = {
+    "verdict": [*texts.VERDICTS.values(), "Referenz"],
+    "export": [*texts.VERDICTS.values(), "Referenz", "geprüft", "platziert", "nicht geprüft",
+               "Prüfung fehlgeschlagen"],
+}  # fmt: skip
+
+
+class Badge(QFrame):
+    """A verdict badge (README "Badge"): ok / wanders / unsure / ref / bad, all of a group
+    the same size whatever their text."""
+
+    HEIGHT = 24
+
+    def __init__(self, kind: str, text: str, group: str = "verdict"):
+        super().__init__()
+        self.setObjectName(f"badge_{kind}")
+        self.text = QLabel(text)
+        line = QHBoxLayout(self)
+        line.setContentsMargins(8, 0, 8, 0)
+        line.setSpacing(6)
+        line.addStretch()
+        line.addWidget(Icon(BADGE_ICONS.get(kind, "")), 0, Qt.AlignmentFlag.AlignVCenter)
+        line.addWidget(self.text, 0, Qt.AlignmentFlag.AlignVCenter)
+        line.addStretch()
+        bold = QFont(self.font())
+        bold.setPixelSize(12)
+        bold.setWeight(QFont.Weight.DemiBold)
+        widest = max(QFontMetrics(bold).horizontalAdvance(t) for t in BADGE_TEXTS[group] + [text])
+        self.setFixedSize(widest + 13 + 6 + 2 * 8 + 4, self.HEIGHT)
+
+
+def badge(kind: str, text: str | None = None, group: str = "verdict") -> Badge:
+    """A verdict badge; ``text`` defaults to the verdict's word."""
+    return Badge(kind, text if text is not None else texts.VERDICTS.get(kind, kind), group)
 
 
 def banner(kind: str, title: str, text: str) -> QFrame:
@@ -78,12 +161,30 @@ def banner(kind: str, title: str, text: str) -> QFrame:
     return frame
 
 
+class _Square(QLabel):
+    def __init__(self, ok: bool):
+        super().__init__()
+        self.shape = "check" if ok else "bang"
+
+    def paintEvent(self, event):  # noqa: N802 (Qt API)
+        super().paintEvent(event)  # the frame from the style sheet
+        paint_icon(self, self.shape, QRectF(self.rect()).adjusted(11, 11, -11, -11))
+
+
 def status_square(ok: bool) -> QLabel:
-    w = QLabel("✓" if ok else "!")
+    w = _Square(ok)
     w.setObjectName("square_ok" if ok else "square_bad")
     w.setFixedSize(40, 40)
-    w.setAlignment(Qt.AlignmentFlag.AlignCenter)
     return w
+
+
+class _StepMark(QLabel):
+    """The box in front of a step: dashed (waiting), a dot (running), a check (done)."""
+
+    def paintEvent(self, event):  # noqa: N802 (Qt API)
+        super().paintEvent(event)
+        shape = {"done": "check", "running": "dot"}.get(self.property("state") or "", "")
+        paint_icon(self, shape, QRectF(self.rect()).adjusted(5, 5, -5, -5))
 
 
 class _Segment(QPushButton):
@@ -155,7 +256,8 @@ class StepList(QFrame):
             row.setObjectName("steprow")
             line = QHBoxLayout(row)
             line.setContentsMargins(0, 7, 0, 7)
-            mark, name, state = label("", "stepmark"), label(texts.step(s)), label("", "mono")
+            mark, name, state = _StepMark(), label(texts.step(s)), label("", "mono")
+            mark.setObjectName("stepmark")
             mark.setFixedSize(24, 24)
             mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
             line.addWidget(mark)
@@ -170,7 +272,6 @@ class StepList(QFrame):
         if step not in self.rows:
             return
         mark, name, right = self.rows[step]
-        mark.setText("✓" if state == "done" else "")
         mark.setProperty("state", state)
         name.setProperty("state", state)
         for w in (mark, name):

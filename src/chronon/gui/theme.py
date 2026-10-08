@@ -222,10 +222,16 @@ QProgressBar[stopped="true"]::chunk {{ background: {t["text3"]}; }}
     font-weight: 700; }}
 #stepmark[state="done"] {{ border: 1px solid {t["green_border"]};
     background: {_mix(t["green"], t["panel"], 0.12)}; }}
-#stepmark[state="running"] {{ border: none; }}
+#stepmark[state="running"] {{ border: 1px solid {t["control_border"]}; color: {t["text"]}; }}
 QLabel[state="waiting"], QLabel[state="cancelled"] {{ color: {t["text3"]}; }}
-#badge_ok, #badge_wanders, #badge_unsure, #badge_bad, #badge_ref {{
-    border-radius: 4px; padding: 2px 9px; font-size: 12px; font-weight: 500; }}
+#badge_ok, #badge_wanders, #badge_unsure, #badge_bad, #badge_ref {{ border-radius: 4px; }}
+#badge_ok QLabel, #badge_wanders QLabel, #badge_unsure QLabel, #badge_bad QLabel,
+#badge_ref QLabel {{ font-size: 12px; font-weight: 500; background: transparent; }}
+#badge_ok QLabel {{ color: {t["green"]}; }}
+#badge_wanders QLabel {{ color: {t["amber"]}; }}
+#badge_unsure QLabel {{ color: {t["text2"]}; }}
+#badge_bad QLabel {{ color: {t["red"]}; }}
+#badge_ref QLabel {{ color: {t["on_accent"]}; font-weight: 600; }}
 #badge_ok {{ color: {t["green"]}; border: 1px solid {t["green_border"]};
     background: {_mix(t["green"], t["panel"], 0.12)}; }}
 #badge_wanders {{ color: {t["amber"]}; border: 1px solid {t["amber_border"]};
