@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -56,6 +57,18 @@ def file_manager() -> str:
     if sys.platform == "win32":
         return "Im Explorer zeigen"
     return "Im Dateimanager zeigen"
+
+
+PACKAGES = (".logicx", ".fcpbundle", ".band")
+
+
+def project_name(path: Path) -> str:
+    """A name for the project: the folder of the first file, or the Logic / Final Cut project
+    it lies in (its media sit in an "Audio Files" folder inside the package)."""
+    for parent in path.parents:
+        if parent.suffix.lower() in PACKAGES:
+            return parent.stem
+    return path.parent.name
 
 
 def default_root() -> Path:
@@ -156,8 +169,10 @@ class ExportPage(QWidget):
             "Korrigiert",
             "Zusätzlich wird der Drift ausgeglichen. Neue Audiodateien werden geschrieben.",
         )
+        self.kind = QButtonGroup(self)  # the radios sit in different cards: not exclusive alone
         for c in (self.sync_choice, self.correct_choice):
             kinds.addWidget(c)
+            self.kind.addButton(c.radio)
             c.radio.toggled.connect(self._kind_changed)
         form.addLayout(kinds)
 
@@ -257,7 +272,7 @@ class ExportPage(QWidget):
         if key != self.loaded_for:
             self.loaded_for = key
             files = list(self.project.infos)
-            base = files[0].parent.name if files else "Projekt"
+            base = project_name(files[0]) if files else "Projekt"
             if not self.name_edited:
                 self.name.setText(base)
             if not self.folder.text():

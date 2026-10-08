@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -80,6 +81,22 @@ def status_square(ok: bool) -> QLabel:
     return w
 
 
+class _Segment(QPushButton):
+    """A segment wide enough for its text in bold, so checking it never clips the text."""
+
+    def sizeHint(self) -> QSize:  # noqa: N802 (Qt API)
+        hint = super().sizeHint()
+        bold = QFont(self.font())
+        bold.setWeight(QFont.Weight.DemiBold)
+        extra = QFontMetrics(bold).horizontalAdvance(
+            self.text()
+        ) - self.fontMetrics().horizontalAdvance(self.text())
+        return QSize(hint.width() + max(extra, 0), hint.height())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return self.sizeHint()
+
+
 class Segmented(QWidget):
     """A segmented control (30 high, selected = accent)."""
 
@@ -92,7 +109,7 @@ class Segmented(QWidget):
         line.setSpacing(0)
         self.group = QButtonGroup(self)
         for k, text in enumerate(options):
-            b = QPushButton(text)
+            b = _Segment(text)
             b.setCheckable(True)
             b.setProperty("role", "segment")
             b.setProperty("edge", "first" if k == 0 else "last" if k == len(options) - 1 else "")

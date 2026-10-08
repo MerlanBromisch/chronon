@@ -12,14 +12,17 @@ pytest.importorskip("PySide6", reason="the app's extra (uv sync --extra gui) is 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEventLoop  # noqa: E402
+from PySide6.QtGui import QFontMetrics  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from chronon import audio, devices, synth  # noqa: E402
 from chronon.gui import devices_page, fmt, settings  # noqa: E402
 from chronon.gui.app import walk  # noqa: E402
+from chronon.gui.export_page import project_name  # noqa: E402
 from chronon.gui.files_page import UnreadableDialog  # noqa: E402
 from chronon.gui.jobs import Job  # noqa: E402
 from chronon.gui.project import media_files  # noqa: E402
+from chronon.gui.widgets import Segmented  # noqa: E402
 from chronon.gui.window import Window  # noqa: E402
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
@@ -316,4 +319,28 @@ def test_settings_switch_the_theme_live(app, monkeypatch):
     assert stored["v"] == "dark" and win.tokens["background"] == "#151618"
     win.go_on()
     assert win.step == 0
+    win.close()
+
+
+def test_project_name_is_the_logic_project_not_its_audio_files_folder():
+    logic = Path("/x/Interview Nico.logicx/Media/Audio Files/Merlan #01.wav")
+    assert project_name(logic) == "Interview Nico"
+    assert project_name(Path("/x/Musical/ZOOM0003.WAV")) == "Musical"
+
+
+def test_a_checked_segment_keeps_room_for_its_bold_text(app):
+    seg = Segmented(["Referenz links · Datei rechts", "Gemischt"])
+    for b in seg.group.buttons():
+        bold = b.font()
+        bold.setBold(True)
+        assert b.sizeHint().width() >= QFontMetrics(bold).horizontalAdvance(b.text())
+
+
+def test_choosing_sync_unchecks_korrigiert(app):
+    win = Window(appearance="light")
+    page = win.export
+    page.correct_choice.radio.setChecked(True)
+    page.sync_choice.radio.setChecked(True)  # what a click on the card does
+    assert not page.correct_choice.radio.isChecked()
+    assert not page.corrected.isVisibleTo(page)  # the corrected-audio rows go away
     win.close()
