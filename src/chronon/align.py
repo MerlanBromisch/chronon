@@ -68,6 +68,10 @@ CHECK_WINDOWS = 192  # for check(): measuring an already corrected file
 FFT_WORKERS = 1  # per FFT; windows already run in parallel threads
 FINE_THREADS = min(6, os.cpu_count() or 1)
 LINK_TRIES = 4  # bridges tried for a clip that does not overlap the reference
+OVERLAP_TOLERANCE_S = 1.0  # clips of one recorder never overlap by more than this
+SPLIT_SIZES = (2**31, 2**32)  # recorders split a long take into files at 2 GiB / 4 GiB (FAT32)
+SPLIT_SLACK_BYTES = 1 << 20  # a file this close below such a size ended at the limit
+STAMP_TOLERANCE_S = 1.5  # recorder time stamps are often whole seconds (Zoom)
 LEAD_TRIES = 6  # parallel tracks tried for the coarse position (loudest first)
 COARSE_REF_TRIES = 4  # reference tracks tried for the coarse position of one file
 # Progress inside one clip, from timing the musical (18 desk tracks, 7 files): the coarse
@@ -373,6 +377,7 @@ class FileResult:
     via: Path | None = None  # the parallel track its clip was measured through
     drift_from: Path | None = None  # the sibling clip whose drift it took
     linked_via: Path | None = None  # placed through this clip of another device (bridge)
+    continues: Path | None = None  # the take this clip continues (one take split into files)
 
 
 @dataclass(frozen=True)
@@ -603,7 +608,11 @@ def align_files(
             del rec
     current.update(step="drift", what="placing clips")
     work.start("drift", "placing clips")
-    _link(clips, out, rate, work)
+    takes = _Takes(devs)
+    takes.reject_overlaps(out, errors)
+    _link(clips, out, rate, work, takes)
+    while takes.continue_split(out):  # a continued take can bridge further clips
+        _link(clips, out, rate, work, takes)
     unmatched = Alignment(0.0, 0.0, 0.0, False, 0, 0)  # no reliable match: windows_used 0
     for dev, clip in clips:
         if clip.tracks[0] not in out:
@@ -624,7 +633,12 @@ def _log_result(path: Path, r: FileResult) -> None:
     a = r.alignment
     how = [
         f"{k} {v.name}"
-        for k, v in (("via", r.via), ("drift from", r.drift_from), ("linked via", r.linked_via))
+        for k, v in (
+            ("via", r.via),
+            ("drift from", r.drift_from),
+            ("linked via", r.linked_via),
+            ("continues", r.continues),
+        )
         if v is not None
     ]
     log.info(
@@ -671,11 +685,140 @@ def _streamed(path: Path) -> bool:
     return False
 
 
+class _Takes:
+    """The clips of each recorder, in recording order (their numbered names; the reference's
+    clip included). One recorder records one thing at a time: its clips never
+    overlap. A long take a recorder split into files at a size limit continues exactly
+    where the previous file ends."""
+
+    def __init__(self, devs: Sequence[devices.Device]):
+        self.groups: dict[str, list[devices.Clip]] = {}
+        self.infos: dict[Path, audio.Info] = {}
+        for d in devs:
+            for c in d.clips:
+                self.infos[c.tracks[0]] = audio.probe(c.tracks[0])
+                self.groups.setdefault(d.name, []).append(c)
+        for group in self.groups.values():
+            group.sort(key=lambda c: c.tracks[0].name)  # recorders number their files
+
+    def _span(self, clip: devices.Clip, a: Alignment) -> tuple[float, float]:
+        return a.offset_s, float(a.ref_time(self.infos[clip.tracks[0]].duration_s))
+
+    def _placed(self, clip: devices.Clip, out: dict[Path, FileResult]) -> FileResult | None:
+        r = out.get(clip.tracks[0])
+        return r if r is not None and (r.is_reference or r.alignment.reliable) else None
+
+    def _group(self, clip: devices.Clip) -> list[devices.Clip]:
+        return next(g for g in self.groups.values() if any(c is clip for c in g))
+
+    def overlaps(self, clip: devices.Clip, a: Alignment, out: dict[Path, FileResult]) -> bool:
+        """Whether ``clip`` placed by ``a`` would overlap a placed clip of its recorder."""
+        lo, hi = self._span(clip, a)
+        for other in self._group(clip):
+            r = None if other is clip else self._placed(other, out)
+            if r is not None:
+                o_lo, o_hi = self._span(other, r.alignment)
+                if min(hi, o_hi) - max(lo, o_lo) > OVERLAP_TOLERANCE_S:
+                    return True
+        return False
+
+    def reject_overlaps(self, out: dict[Path, FileResult], errors: dict[Path, str]) -> None:
+        """Clips placed over another clip of their own recorder matched something that only
+        sounds alike (a reprise, a loop): the weaker of the two is not placed (never the
+        reference), so it is linked or continued instead."""
+        changed = True
+        while changed:
+            changed = False
+            for group in self.groups.values():
+                for clip in group:
+                    r = self._placed(clip, out)
+                    if r is None or r.is_reference or not self.overlaps(clip, r.alignment, out):
+                        continue
+                    rivals = [
+                        o for o in group
+                        if o is not clip and (p := self._placed(o, out)) is not None
+                        and min(self._span(clip, r.alignment)[1], self._span(o, p.alignment)[1])
+                        - max(r.alignment.offset_s, p.alignment.offset_s) > OVERLAP_TOLERANCE_S
+                    ]  # fmt: skip
+                    strongest = max(
+                        rivals,
+                        key=lambda o: (out[o.tracks[0]].is_reference,
+                                       _rank(out[o.tracks[0]].alignment)),
+                    )  # fmt: skip
+                    victim = clip
+                    if not out[strongest.tracks[0]].is_reference and _rank(
+                        out[strongest.tracks[0]].alignment
+                    ) < _rank(r.alignment):
+                        victim = strongest
+                    name = victim.tracks[0].name
+                    log.warning("%s: placed over another clip of its recorder; not used", name)
+                    errors[victim.tracks[0]] = "overlaps another clip of the same recorder"
+                    for t in victim.tracks:
+                        out.pop(t, None)
+                    changed = True
+
+    def split_after(self, first: devices.Clip, second: devices.Clip) -> bool:
+        """Whether ``second`` continues ``first``'s take: ``first`` ended at a file size limit,
+        or the recorder's time-of-day stamps (BWF) put ``second`` right where ``first`` ends.
+        A camera's timecode proves nothing: in record-run mode it only counts while
+        recording, so every clip seems to continue the last."""
+        a, b = self.infos[first.tracks[0]], self.infos[second.tracks[0]]
+        stamped = not (a.has_video or b.has_video)
+        if stamped and a.time_reference is not None and b.time_reference is not None:
+            gap = (b.time_reference / b.sample_rate) - (a.time_reference / a.sample_rate)
+            return abs(gap - a.duration_s) <= STAMP_TOLERANCE_S
+        size = first.tracks[0].stat().st_size
+        return any(0 <= limit - size <= SPLIT_SLACK_BYTES for limit in SPLIT_SIZES)
+
+    def continue_split(self, out: dict[Path, FileResult]) -> bool:
+        """Place clips not placed yet that continue (or are continued by) a placed clip of
+        their recorder: sample-exact, on the same clock. Whether any was placed."""
+        placed_any = False
+        for group in self.groups.values():
+            for k, clip in enumerate(group):
+                if self._placed(clip, out) is not None:
+                    continue
+                before = group[k - 1] if k else None
+                after = group[k + 1] if k + 1 < len(group) else None
+                if (
+                    before is not None
+                    and (r := self._placed(before, out)) is not None
+                    and (self.split_after(before, clip))
+                ):
+                    end = float(r.alignment.ref_time(self.infos[before.tracks[0]].duration_s))
+                    a = replace(r.alignment, offset_s=end, good_s=(), good_lag=())
+                    source = before
+                elif (
+                    after is not None
+                    and (r := self._placed(after, out)) is not None
+                    and (self.split_after(clip, after))
+                ):
+                    length = self.infos[clip.tracks[0]].duration_s
+                    start = r.alignment.offset_s - length / (1 + r.alignment.drift_ppm * 1e-6)
+                    a = replace(r.alignment, offset_s=start, good_s=(), good_lag=())
+                    source = after
+                else:
+                    continue
+                if r.is_reference:  # the reference's own clock: no drift, its confidence
+                    a = replace(a, drift_ppm=0.0, confidence=1.0, windows_used=RELIABLE_WINDOWS,
+                                windows_total=RELIABLE_WINDOWS)  # fmt: skip
+                if self.overlaps(clip, a, out):
+                    continue
+                log.info("%s: continues the take of %s", clip.tracks[0].name,
+                         source.tracks[0].name)  # fmt: skip
+                device = next(n for n, g in self.groups.items() if g is group)
+                for t in clip.tracks:
+                    out[t] = FileResult(r.reference, a, device, continues=source.tracks[0])
+                placed_any = True
+        return placed_any
+
+
 def _link(
     clips: Sequence[tuple[devices.Device, devices.Clip]],
     out: dict[Path, FileResult],
     rate: int,
     work: _Work | None = None,
+    takes: _Takes | None = None,
 ) -> None:
     """Place clips that found no reliable match with the reference through clips of other
     devices that did (a camera that started before the desk, but overlaps the Zoom). The
@@ -717,8 +860,11 @@ def _link(
                     continue
                 finally:
                     stage(1.0)
+                composed = _compose(a, rb.alignment)
+                if takes is not None and takes.overlaps(clip, composed, out):
+                    continue  # its own recorder was busy then: a false match
                 if a.reliable and (best is None or _rank(a) > _rank(best[0])):
-                    best = (a, _compose(a, rb.alignment), track, lead)
+                    best = (a, composed, track, lead)
             if best is None:
                 continue
             a, composed, track, lead = best

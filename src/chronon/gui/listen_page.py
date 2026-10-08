@@ -56,7 +56,7 @@ class ListenPage(QWidget):
 
         # left: the files
         left, left_box = card((0, 0, 0, 0))
-        left.setFixedWidth(340)
+        left.setFixedWidth(364)  # a file name and its badge beside the scroll bar
         head = QHBoxLayout()
         head.setContentsMargins(14, 10, 14, 10)
         head.addWidget(label("DATEI PRÜFEN", "section"))
@@ -66,6 +66,7 @@ class ListenPage(QWidget):
         left_box.addLayout(head)
         self.list = QListWidget()
         self.list.setObjectName("filelist")
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list.currentRowChanged.connect(self._picked)
         left_box.addWidget(self.list)
 
@@ -74,12 +75,10 @@ class ListenPage(QWidget):
         line = QHBoxLayout()
         self.name = label("", "monotitle")
         self.badge_box = QHBoxLayout()
-        self.device = label("", "muted")
         line.addWidget(self.name)
         line.addLayout(self.badge_box)
         line.addStretch()
-        line.addWidget(self.device)
-        self.hint = label("", "hint", wrap=True)
+        self.hint = label("", "hint", wrap=True)  # the device, then how it was placed
         top_box.addLayout(line)
         top_box.addWidget(self.hint)
 
@@ -216,9 +215,8 @@ class ListenPage(QWidget):
             if old is not None:
                 old.setParent(None)
         self.badge_box.addWidget(badge(texts.verdict(row)))
-        self.device.setText(f"Gerät {row['device']}")
-        self.hint.setText(hint(row, links=False))
-        self.hint.setVisible(bool(self.hint.text()))
+        how = hint(row, links=False)
+        self.hint.setText(f"Gerät {row['device']}" + (f" · {how}" if how else ""))
         self.file_label.setText(path.stem)
         start, end = self.timeline.span(path)
         zero = self.timeline.zero

@@ -8,9 +8,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEventLoop
+from PySide6.QtCore import QEventLoop, QLibraryInfo, QTranslator
 from PySide6.QtWidgets import QApplication
 
+from chronon.gui import menus
 from chronon.gui.window import Window
 
 STEP_TIMEOUT_S = 300.0
@@ -102,8 +103,12 @@ def selftest(folder: str) -> int:
 def run(argv: list[str]) -> int:
     if argv[:1] == ["--selftest"]:
         return selftest(argv[1])
+    menus.name_the_app("Chronon")  # before the app starts: macOS reads it once
     app = QApplication(sys.argv)
     app.setApplicationName("Chronon")
+    german = QTranslator(app)  # Qt's own words (menu roles, dialogs) in German
+    if german.load("qtbase_de", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
+        app.installTranslator(german)
     win = Window()
     if argv:
         win.files.add(argv)

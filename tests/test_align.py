@@ -1,4 +1,5 @@
 import shutil
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -356,3 +357,81 @@ def test_progress_slows_down_when_the_work_grows_instead_of_standing_at_the_end(
     assert at_grow < shown[-1] < 1.0  # it moves on, it does not stand at the end
     work.finish("drift")
     assert shown == sorted(shown) and shown[-1] == 1.0
+
+
+def _takes(tmp_path, monkeypatch, specs):
+    """``_Takes`` over fake files: name -> (duration_s, BWF stamp in s or None, size, video)."""
+    from chronon import audio, devices
+
+    infos = {}
+    for name, (duration, stamp, size, video) in specs.items():
+        path = tmp_path / name
+        with open(path, "wb") as f:
+            f.truncate(size)
+        infos[path] = audio.Info(
+            48_000, 2, 24, round(duration * 48_000), video,
+            time_reference=None if stamp is None else round(stamp * 48_000),
+        )  # fmt: skip
+    monkeypatch.setattr(audio, "probe", lambda p: infos[Path(p)])
+    ref, rest = list(infos)[0], list(infos)[1:]
+    devs = [
+        devices.Device("zoom", [devices.Clip([ref])], is_reference=True),
+        devices.Device("zoom", [devices.Clip([p]) for p in rest]),
+    ]
+    return align._Takes(devs), ref, rest
+
+
+def _placed(offset):
+    return align.Alignment(offset, 0.0, 0.9, False, 90, 100)
+
+
+def test_a_clip_placed_over_its_own_recorders_other_clip_is_not_used(tmp_path, monkeypatch):
+    takes, ref, (second,) = _takes(
+        tmp_path,
+        monkeypatch,
+        {"Z3.WAV": (7456.0, None, 1000, False), "Z4.WAV": (6554.0, None, 1000, False)},
+    )
+    identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
+    out = {
+        ref: align.FileResult(ref, identity, "zoom", is_reference=True),
+        second: align.FileResult(ref, _placed(6942.5), "zoom"),  # a reprise: 513 s over Z3
+    }
+    errors = {}
+    takes.reject_overlaps(out, errors)
+    assert second not in out and second in errors and ref in out
+
+
+def test_a_take_split_into_files_continues_where_the_last_file_ends(tmp_path, monkeypatch):
+    # the recorder's time-of-day stamps put Z4 right after Z3 (whole seconds, like a Zoom)
+    takes, ref, (second,) = _takes(
+        tmp_path, monkeypatch,
+        {"Z3.WAV": (7456.085, 65754, 1000, False), "Z4.WAV": (6554.5, 73210, 1000, False)},
+    )  # fmt: skip
+    identity = align.Alignment(0.0, 0.0, 1.0, False, 1, 1)
+    out = {ref: align.FileResult(ref, identity, "zoom", is_reference=True)}
+    assert takes.continue_split(out)
+    r = out[second]
+    assert r.alignment.offset_s == pytest.approx(7456.085) and r.alignment.reliable
+    assert r.continues == ref and r.alignment.drift_ppm == 0.0
+
+
+def test_a_file_ending_at_2_gib_is_continued_by_the_next(tmp_path, monkeypatch):
+    takes, ref, (second,) = _takes(
+        tmp_path, monkeypatch,
+        {"Z3.WAV": (7456.085, None, 2**31 - 1000, False), "Z4.WAV": (60.0, None, 1000, False)},
+    )  # fmt: skip
+    a = align.Alignment(10.0, -8.0, 0.9, False, 90, 100)
+    out = {ref: align.FileResult(ref, a, "zoom")}
+    assert takes.continue_split(out)
+    assert out[second].alignment.offset_s == pytest.approx(float(a.ref_time(7456.085)))
+    assert out[second].alignment.drift_ppm == -8.0  # the same clock
+
+
+def test_a_cameras_timecode_does_not_make_clips_continue(tmp_path, monkeypatch):
+    # record-run timecode counts only while recording: every clip seems to follow the last
+    takes, ref, (second,) = _takes(
+        tmp_path, monkeypatch,
+        {"C1.MP4": (100.0, 0, 1000, True), "C2.MP4": (100.0, 100, 1000, True)},
+    )  # fmt: skip
+    out = {ref: align.FileResult(ref, _placed(5.0), "cam")}
+    assert not takes.continue_split(out) and second not in out

@@ -36,7 +36,7 @@ from chronon.gui.audition import Audition, Overviews, Player
 from chronon.gui.project import Detector, Project
 
 DRAG_MIME = "application/x-chronon-device"
-COLUMNS = (34, 30, 0, 160, 96, 180, 112, 36)  # handle, radio, name, kind, rate, role, files, …
+COLUMNS = (34, 30, 0, 130, 80, 170, 100, 36)  # handle, radio, name, kind, rate, role, files, …
 
 
 # --- texts -------------------------------------------------------------------------------
@@ -272,6 +272,7 @@ class DevicesPage(QWidget):
         self.detector: Detector | None = None
         self.open: devices.Device | None = None  # the device whose files are shown
         self.editing: devices.Device | None = None  # the device being renamed
+        self.shown: devices.Device | None = None  # the device section 2 shows (its radio)
         self.selected: set[Path] = set()
         self.error = ""
         self.setAcceptDrops(True)
@@ -299,10 +300,13 @@ class DevicesPage(QWidget):
 
         heading = QHBoxLayout()
         heading.addWidget(_label("1 · GERÄTE PRÜFEN, REFERENZ WÄHLEN", "section"))
-        heading.addStretch()
-        heading.addWidget(_label(
+        heading.addSpacing(24)
+        note = _label(
             "Namen und Reihenfolge gelten für Dateinamen und Timeline. Zeilen am Griff ziehen.",
-            "muted"))  # fmt: skip
+            "muted")  # fmt: skip
+        note.setWordWrap(True)
+        note.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        heading.addWidget(note, 1)
         inner = QWidget()
         inner.setObjectName("content")
         column = QVBoxLayout(inner)
@@ -437,15 +441,15 @@ class DevicesPage(QWidget):
         layout, infos = self.layout_, self.project.infos
         row = QFrame()
         row.setObjectName("devicerow")
-        row.setProperty("reference", "true" if k == layout.reference else "false")
+        row.setProperty("selected", "true" if d is self._shown() else "false")
         row.setFixedHeight(44)
         grid = self._grid()
         row.setLayout(grid)
         grid.addWidget(Handle(k), 0, 0)
         radio = QRadioButton()
-        radio.setChecked(k == layout.reference)
-        radio.setToolTip("Als Referenz verwenden")
-        radio.clicked.connect(lambda: self.set_reference(k))
+        radio.setChecked(d is self._shown())
+        radio.setToolTip("Anzeigen und vorhören")
+        radio.clicked.connect(lambda: self.show_device(d))
         self.radios.addButton(radio, k)
         grid.addWidget(radio, 0, 1)
         if d is self.editing:
@@ -579,11 +583,39 @@ class DevicesPage(QWidget):
             box.addWidget(bar)
         return panel
 
+    def _shown(self) -> devices.Device:
+        """The device whose tracks section 2 shows: the one picked by its radio, else the
+        reference."""
+        layout = self.layout_
+        if self.shown is None or not any(d is self.shown for d in layout.devices):
+            self.shown = layout.devices[layout.reference]
+        return self.shown
+
     def _tracks(self) -> None:
-        """'2 · Referenz-Spuren von <Gerät>': the tracks of the clip holding the reference
-        tracks (several can be chosen), or the clips of a clip device (one is chosen)."""
+        """Section 2 for the device picked by its radio. The reference: '2 · Referenz-Spuren
+        von <Gerät>' (the tracks of the clip holding the reference tracks, several can be
+        chosen, or the clips of a clip device, one is chosen), then the audition. Any other
+        device: only the audition of its files."""
         layout = self.layout_
         ref = layout.devices[layout.reference]
+        shown = self._shown()
+        infos = self.project.infos
+        if shown is not ref:
+            head = QHBoxLayout()
+            head.addWidget(_label(f"2 · {shown.name}", "cardtitle"))
+            head.addStretch()
+            note = _label(f"Referenz ist {ref.name}; ändern im Menü „…“ eines Geräts.", "muted")
+            note.setWordWrap(True)
+            note.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            head.addSpacing(24)
+            head.addWidget(note, 1)
+            self.tracks_box.addLayout(head)
+            files = shown.files
+            self.audition.set_tracks(
+                [(f, shown.track_label(f) if shown.multitrack else f.name) for f in files],
+                {f: infos[f].duration_s for f in files if f in infos},
+            )
+            return
         clip = next((c for c in ref.clips if set(layout.tracks) <= set(c.tracks)), ref.clips[0])
         multi = len(clip.tracks) > 1
         head = QHBoxLayout()
@@ -597,7 +629,11 @@ class DevicesPage(QWidget):
                 and layout.tracks == self.project.suggested_tracks
             ):
                 hint = f"Vorschlag: die lautesten Spuren, {len(layout.tracks)} gewählt. " + hint
-            head.addWidget(_label(hint, "muted"))
+            note = _label(hint, "muted")
+            note.setWordWrap(True)
+            note.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            head.addSpacing(24)
+            head.addWidget(note, 1)
         self.tracks_box.addLayout(head)
         chips = QWidget()
         flow = _Flow(chips)
@@ -620,7 +656,6 @@ class DevicesPage(QWidget):
         flow.finish()
         self.tracks_box.addWidget(chips)
         self.chip_area = chips
-        infos = self.project.infos
         listen_to = [t for t in choices if t in layout.tracks] + [
             t for t in choices if t not in layout.tracks
         ]
@@ -630,8 +665,13 @@ class DevicesPage(QWidget):
         )
 
     # --- actions ----------------------------------------------------------------------
+    def show_device(self, d: devices.Device) -> None:
+        self.shown = d
+        self.rebuild()
+
     def set_reference(self, k: int) -> None:
         layout = self.layout_
+        self.shown = layout.devices[k]  # section 2 shows the new reference's tracks
         if k != layout.reference:
             layout.reference = k
             for j, d in enumerate(layout.devices):
@@ -697,6 +737,9 @@ class DevicesPage(QWidget):
 
     def _device_menu(self, k: int, d: devices.Device, anchor: QWidget) -> None:
         menu = QMenu(self)
+        reference = menu.addAction("Als Referenz verwenden", lambda: self.set_reference(k))
+        reference.setEnabled(k != self.layout_.reference)
+        menu.addSeparator()
         menu.addAction("Umbenennen …", lambda: self.start_rename(d))
         up = menu.addAction("Nach oben", lambda: self.move_device(k, k - 1))
         down = menu.addAction("Nach unten", lambda: self.move_device(k, k + 1))

@@ -351,6 +351,8 @@ def result_notes(r: align.FileResult) -> list[messages.Note]:
         notes.append(note("drift_from", file=str(r.drift_from)))
     if r.linked_via is not None:
         notes.append(note("linked_via", file=str(r.linked_via)))
+    if r.continues is not None:
+        notes.append(note("continues", file=str(r.continues)))
     return notes
 
 

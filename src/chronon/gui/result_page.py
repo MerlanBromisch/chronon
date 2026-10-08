@@ -24,6 +24,7 @@ from chronon.gui.project import Project
 from chronon.gui.widgets import badge, button, card, label, status_square
 
 LEFT_MIDDLE = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+STRIP = 18.0  # a timeline region's name strip
 
 
 def ppm(value: float) -> str:
@@ -98,7 +99,7 @@ class Timeline(QWidget):
     tooltip tells a region's file, span and drift."""
 
     RULER = 26
-    LANE = 52
+    LANE = 58
     LEFT = 150
 
     def __init__(self, tokens: dict[str, str], overviews: Overviews | None = None):
@@ -215,24 +216,26 @@ class Timeline(QWidget):
         )
         p.setBrush(body)
         p.drawRoundedRect(rect, 3, 3)
-        strip = QRectF(rect.left(), rect.top(), rect.width(), min(15.0, rect.height()))
+        strip = QRectF(rect.left(), rect.top(), rect.width(), min(STRIP, rect.height()))
         if rect.width() > 6:
+            # the strip: rounded at the top, square below (both shapes filled, not cancelled)
             path = QPainterPath()
+            path.setFillRule(Qt.FillRule.WindingFill)
             path.addRoundedRect(strip, 3, 3)
-            path.addRect(strip.adjusted(0, 6, 0, 0))
+            path.addRect(strip.adjusted(0, 4, 0, 0))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(color)
-            p.drawPath(path.simplified())
+            p.drawPath(path)
             label_font = QFont(self.font())
-            label_font.setPixelSize(10)
+            label_font.setPixelSize(11)
             label_font.setWeight(QFont.Weight.DemiBold)
             p.setFont(label_font)
             p.setPen(QColor(t["on_accent"]))
             mark = {"wanders": "⚠ ", "unsure": "? "}.get(r.verdict, "")
             text = p.fontMetrics().elidedText(mark + (r.name or r.path.name),
                                                Qt.TextElideMode.ElideRight,
-                                               int(strip.width() - 8))  # fmt: skip
-            p.drawText(strip.adjusted(4, 0, -4, 0), Qt.AlignmentFlag.AlignVCenter, text)
+                                               int(strip.width() - 12))  # fmt: skip
+            p.drawText(strip.adjusted(6, 0, -6, 0), Qt.AlignmentFlag.AlignVCenter, text)
         wave_box = QRectF(rect.left() + 1, strip.bottom() + 2, rect.width() - 2,
                           rect.bottom() - strip.bottom() - 4)  # fmt: skip
         n = int(wave_box.width())
@@ -241,12 +244,12 @@ class Timeline(QWidget):
         cols = self._wave(r.path, n)
         if cols is None:
             return
-        _lo, hi, _core = cols
+        lo, hi = cols
         mid, half = wave_box.center().y(), wave_box.height() / 2
         xs = wave_box.left() + np.arange(n) + 0.5
         shape = QPolygonF(
             [QPointF(x, mid - half * v) for x, v in zip(xs, hi, strict=True)]
-            + [QPointF(x, mid + half * v) for x, v in zip(xs[::-1], hi[::-1], strict=True)]
+            + [QPointF(x, mid - half * v) for x, v in zip(xs[::-1], lo[::-1], strict=True)]
         )
         p.setPen(Qt.PenStyle.NoPen)
         wave = QColor(color)

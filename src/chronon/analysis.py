@@ -193,6 +193,7 @@ def _result_row(path: Path, r: align.FileResult) -> dict:
         "via": _str(r.via),
         "drift_from": _str(r.drift_from),
         "linked_via": _str(r.linked_via),
+        "continues": _str(r.continues),
         "alignment": asdict(r.alignment),
     }
 
@@ -210,6 +211,7 @@ def _result_from_row(row: dict) -> align.FileResult:
         _path(row["via"]),
         _path(row["drift_from"]),
         _path(row["linked_via"]),
+        _path(row.get("continues")),  # written since 2026-10-08
     )
 
 

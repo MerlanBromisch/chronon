@@ -52,6 +52,12 @@ Waveform-based sync for multi-device recordings with clock drift correction. Pla
   - Which track of a multitrack desk is the reference matters more than anything else.
   - Some clocks (battery recorders) wander by ±2 ms over hours — not a straight line.
   - A multi-source effect must first be reproduced in `chronon.synth` (see `test_room_*`).
+  - One recorder records one thing at a time: its clips never overlap. A match that puts a
+    clip over its own sibling (the musical's Zoom: the end of ZOOM0003 against the start of
+    ZOOM0004, 513 s off, "reliable") is a false match and is dropped. A take split into files
+    (2 / 4 GiB) continues exactly where the last file ends: proven by BWF time-of-day stamps or
+    a file ending at the size limit, never by camera timecode (record-run counts only while
+    recording).
 - Final Cut import (tested 2026-10-05): asset `start` must equal what FCP reads as media start.
   Sony XAVC S MP4 keeps its timecode only in an `rtmd` track that FCP ignores (media start 0);
   only `tmcd` timecode counts. Formats need FCP's name (`FFVideoFormat3840x2160p25`).

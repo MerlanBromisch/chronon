@@ -219,7 +219,11 @@ def test_devices_step_edits_the_layout(app, tmp_path):
     # order and reference
     page.move_device(1, 0)
     assert [d.name for d in layout.devices] == ["rec", "Kameras"] and layout.reference == 0
-    page.set_reference(1)
+    # the radio only shows a device (to listen to); the reference stays
+    page.show_device(layout.devices[1])
+    assert layout.reference == 0 and page.audition.path in layout.devices[1].files
+    assert len(page.audition.tracks) == len(layout.devices[1].files)
+    page.set_reference(1)  # from the device's "…" menu
     assert layout.devices[1].is_reference and len(layout.tracks) == 1
     clip = layout.devices[1].clips[1].tracks[0]
     page.toggle_track(clip)

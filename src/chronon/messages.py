@@ -41,6 +41,7 @@ TEXTS: dict[str, Callable[[Note], str]] = {
     "linked_via": lambda n: (
         f"linked via {_name(n['file'])} (no reliable overlap with the reference)"
     ),
+    "continues": lambda n: f"continues {_name(n['file'])} (one take split into files)",
     # the written file
     "joined": lambda n: "joined: " + ", ".join(_name(f) for f in n["files"]),
     "wav_over_2gib": lambda n: "WAV over 2 GiB: a few programs may not read it",
