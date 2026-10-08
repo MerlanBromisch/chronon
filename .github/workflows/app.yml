@@ -1,16 +1,20 @@
 name: App build
 
+# Builds cost the most Actions minutes (macOS counts 10x): only on demand ("Run workflow", any
+# branch) and for a version tag.
 on:
-  push:
-    branches: [main]
-    paths: ["src/**", "packaging/**", "pyproject.toml", "uv.lock", ".github/workflows/app.yml"]
-  pull_request:
-    paths: ["src/**", "packaging/**", "pyproject.toml", "uv.lock", ".github/workflows/app.yml"]
   workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

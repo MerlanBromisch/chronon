@@ -1,16 +1,25 @@
 name: CI
 
+# Actions minutes are limited (private repo: macOS counts 10x, Windows 2x). A PR runs on Linux
+# only, once per push; main and a manual run ("Run workflow", any branch) test all three systems.
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:  # a newer push replaces a PR's running check
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20  # a hung apt-get once held a runner for the 6 h default
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     defaults:
       run:
         shell: bash

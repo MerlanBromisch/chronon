@@ -28,6 +28,11 @@ this file when it is out of date.
     fcpxml|none`, `--fps`, FCPXML lanes in the user's device order.
 - **CI** runs the full suite on Ubuntu, macOS and Windows (LGPL ffmpeg on Windows: no libx264,
   test videos use `mpeg4`). Windows has already caught two path bugs; expect more.
+  Actions minutes are limited (private repo on GitHub Pro: 3000 a month, macOS counts 10×,
+  Windows 2×), so a PR runs Linux only, once per push; main pushes run all three systems. Before
+  calling a PR done, start CI once by hand on its branch ("Run workflow", `workflow_dispatch`)
+  for all three systems, and the app build too when the app or packaging changed. Jobs time out
+  after 20 min (app build 30 min): a hung `apt-get` once held a runner for 6 h.
 - **Desktop app** (`src/chronon/gui/`, see `docs/app.md` "The app in the repo"): window, theme,
   jobs (`chronon … --json` in a child process), step 1 "Dateien" and step 2 "Geräte & Referenz"
   without its audition are built; steps 3–6 and settings are placeholders. Packaging from the spike (PyInstaller, bundled ffmpeg, headless
@@ -47,7 +52,8 @@ this file when it is out of date.
 - Replies in German; code, comments, docs in English. Short answers, a recommendation rather
   than a list of options. Ask before deciding things that change what the user sees.
 - Personal open-source project (MIT): no commitment to signing, releases or updates.
-- One branch per task, a PR with a test plan, CI green on all three systems before saying done.
+- One branch per task, a PR with a test plan, CI green on all three systems before saying done
+  (the all-systems run is started by hand once per PR, see CI above; save minutes).
   **The user merges PRs** (merging is blocked for Claude) and then runs `git pull` locally.
 - The user designs in a Claude Desktop session that writes straight into their local
   `docs/design/`. Never switch branches in their main checkout; commit design files from a
