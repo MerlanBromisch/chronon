@@ -40,8 +40,9 @@ These apply to every stage and decide trade-offs.
 ## Stage 2 — Robustness
 - [x] Devices: parallel tracks measured once; numbered clips grouped; short clips borrow drift — automatic, `--separate` to switch off
 - [x] Devices: manual grouping in the core — `chronon devices --save`, edit, `analyze --devices`
-  (names, descriptions, order = timeline lanes, regrouping, track names, suggested reference)
+  (names, order = timeline lanes, regrouping, track names, suggested reference)
 - [x] Chain clips that do not overlap the reference through clips of other devices (multi-hop)
+- [x] A recorder's clips never overlap; a take split into files (2 / 4 GiB, BWF stamps) continues
 - [x] Confidence from window agreement; flag files without a reliable match
 - [ ] Resolve conflicting matches between files
 - [x] Rooms with several sources at different distances (RANSAC line fit)
@@ -59,9 +60,12 @@ Concept and decisions: [docs/app.md](docs/app.md). Python + PySide6, jobs in a c
 - [x] `--json` progress/result events and a versioned report schema
 - [x] Windows in CI; path robustness (drive letters, long paths, Unicode, case)
 - [x] Packaging spike: PyInstaller builds for all three platforms from CI (unsigned) — branch `spike/packaging`
-- [ ] Drop & export: files, devices and reference, sync with progress, result table, export
-- [ ] Listen to a match (reference and file together)
-- [ ] Later: timeline view with confidence per clip, manual correction of wrong matches
+- [x] The six steps: files, devices and reference, sync with progress, result (timeline and
+  details), listening (reference and file together), export (Sync / Korrigiert)
+- [x] Settings (appearance, cache, protocols), the macOS menu bar, playback without dropouts
+- [x] Beta 1.0.0-beta.1: versioned builds; a `v*` tag publishes a GitHub Release
+- [ ] Save a project and open it again — #34
+- [ ] Later: manual correction of wrong matches
 - [ ] Later, only on demand: signed builds, update hint
 
 ## Ideas

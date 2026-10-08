@@ -1,6 +1,6 @@
 [project]
 name = "chronon"
-version = "0.0.1"
+version = "1.0.0b1"
 description = "Automatic waveform-based sync for multi-device recordings, with clock drift correction."
 readme = "README.md"
 license = "MIT"
