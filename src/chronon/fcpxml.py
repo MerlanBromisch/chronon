@@ -17,12 +17,16 @@ Placement rules:
   (``tmcd``) counts: Sony XAVC S stores its timecode in a ``rtmd`` metadata track that
   Final Cut ignores for a bare MP4 (media start 0), and a mismatch makes the clip point
   at media that does not exist.
+- A video whose audio track starts after its picture (an MP4 edit list; Android phones
+  delay it ~0.2 s) is placed by its picture: editors play the audio where the edit list
+  puts it, while the aligner measured its first sample.
 - A corrected audio file named like its video (C2378.MP4 / C2378.wav) is called
   "C2378 audio" so the two can be told apart.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import subprocess
@@ -70,6 +74,7 @@ class Media:
     width: int = 0
     height: int = 0
     variable_rate: bool = False  # frames not evenly spaced (phones in low light)
+    audio_start: Fraction = Fraction(0)  # media time of the first audio sample (edit list)
 
 
 @dataclass
@@ -96,6 +101,13 @@ def write(
 def place(items: list[Item], frame: Fraction | None = None) -> list[Placed]:
     medias = [probe(i.path) for i in items]
     frame = frame or timeline_frame(medias)
+    # a picture that starts before its audio (edit list) and before timeline zero would be
+    # cut: the whole timeline gets a lead-in of whole frames instead
+    pairs = zip(items, medias, strict=True)
+    early = max((float(m.audio_start) - i.position_s for i, m in pairs), default=0)
+    lead = _ceil(Fraction(early), frame) if early > 0 else Fraction(0)
+    if lead:
+        items = [dataclasses.replace(i, position_s=i.position_s + float(lead)) for i in items]
     placed = [_place(i, m, frame) for i, m in zip(items, medias, strict=True)]
     _assign_lanes(placed)
     return placed
@@ -219,6 +231,8 @@ def _place(item: Item, m: Media, frame: Fraction) -> Placed:
     half = float(m.duration) / 2
     # centre the media: its middle lands where it belongs, the ends are off by +-half*d
     pos = item.position_s + half / (1 + d) - half
+    # the aligner placed the first audio sample; an edit list puts it after the media start
+    pos -= float(m.audio_start) / (1 + d)
     error_ms = abs(half * d / (1 + d)) * 1e3
     if m.has_video:
         # video: nearest frame; the rounding adds up to half a frame
@@ -227,7 +241,8 @@ def _place(item: Item, m: Media, frame: Fraction) -> Placed:
         offset, trim = max(rounded, Fraction(0)), max(-rounded, Fraction(0))
     else:
         # audio: next frame boundary, trimmed by the remainder (sample-accurate)
-        offset = _ceil(Fraction(pos), frame) if pos > 0 else Fraction(0)
+        exact = Fraction(round(pos * m.rate), m.rate)  # no float noise across a frame edge
+        offset = _ceil(exact, frame) if exact > 0 else Fraction(0)
         trim = Fraction(round((float(offset) - pos) * m.rate), m.rate)
     usable = m.duration - trim
     duration = (usable // frame) * frame
@@ -309,6 +324,7 @@ def probe(path: Path | str) -> Media:
         width=int(video.get("width", 0)) if video else 0,
         height=int(video.get("height", 0)) if video else 0,
         variable_rate=bool(video) and variable,
+        audio_start=info.audio_start,
     )
 
 

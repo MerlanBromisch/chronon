@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import json
+import os
 import re
 import shutil
 import struct
@@ -45,6 +47,11 @@ class Info:
     recorder: str = ""  # whatever names the device: BWF encoder, MP4 brand / encoder tag
     timecode: str | None = None  # video timecode as Final Cut reads it (``tmcd`` track only)
     frame: Fraction | None = None  # video frame duration
+    # Container time of the first decoded sample: an MP4 edit list can delay the audio
+    # behind the picture (Android phones: ~0.2 s). Editors play it there; ffmpeg decodes
+    # from that sample, so file time 0 here is ``audio_start`` in the container.
+    audio_start: Fraction = Fraction(0)
+    container_start: Fraction = Fraction(0)  # what ffmpeg counts ``-ss`` from
 
     @property
     def duration_s(self) -> float:
@@ -124,7 +131,23 @@ def probe(path: Path | str) -> Info:
         recorder=recorder,
         timecode=timecode_tag(streams, data.get("format", {}).get("tags", {})) if video else None,
         frame=frame,
+        audio_start=_start_time(a),
+        container_start=_start_time(data.get("format", {})),
     )
+
+
+def _start_time(entry: dict) -> Fraction:
+    try:
+        return Fraction(entry.get("start_time", "0"))
+    except ValueError:  # "N/A"
+        return Fraction(0)
+
+
+@functools.lru_cache(maxsize=256)
+def _decode_start(path: str, mtime_ns: int) -> float:
+    """Where ffmpeg's ``-ss`` counts file time 0 of the decoded audio (see ``Info``)."""
+    info = probe(path)
+    return float(info.audio_start - info.container_start)
 
 
 def timecode_tag(streams: list[dict], fmt_tags: dict) -> str | None:
@@ -269,7 +292,9 @@ def _excerpt_ffmpeg(path: Path | str, start_s: float, seconds: float, rate: int,
     # Seek coarsely before the excerpt (fast), then cut it exactly from the decoded audio.
     # Seeking straight to the start lands up to ~1100 samples off on AAC in newer ffmpeg
     # (the encoder delay is lost), and so does any seek near the file's start.
-    start = max(start_s, 0.0)
+    # -ss counts container time; file time counts from the first decoded sample
+    shift = _decode_start(str(path), os.stat(path).st_mtime_ns)
+    start = max(start_s, 0.0) + shift
     seek = start - SEEK_MARGIN_S if start >= 2 * SEEK_MARGIN_S else 0.0
     cmd = [
         _tool("ffmpeg"),

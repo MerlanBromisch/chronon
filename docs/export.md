@@ -79,6 +79,16 @@ Two kinds of grouping, decided 2026-10-05 after looking at the musical:
 - The video itself keeps its clock drift. It is placed so the error is smallest over the clip
   (centred rather than start-aligned); the remaining error is reported and a warning is shown
   when it exceeds half a frame. Retiming video in the timeline is a later stage.
+- Audio that starts after the picture (an MP4 edit list; Android phones delay it 0.18–0.27 s)
+  is honoured: ffmpeg decodes from the first audio sample, editors play that sample where the
+  edit list puts it, so the video is placed by its picture. When a picture would start before
+  timeline zero, the whole timeline gets a lead-in of whole frames instead of cutting it.
+- Known limit (measured 2026-10-17 with AVFoundation, i.e. Final Cut): decoders disagree
+  slightly at the very start of compressed audio. Android AAC whose edit list does not skip
+  the encoder priming plays ~44 ms (2112 samples) earlier in Final Cut than ffmpeg decodes
+  it; an MP3 plays ~12 ms (529 samples, decoder delay) earlier. Both are about a frame or
+  less and differ per editor (Premiere and Resolve not measured), so Chronon does not
+  correct them. Re-wrapping such media (picture copied, audio as PCM) would remove them.
 
 ## Reference
 

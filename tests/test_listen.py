@@ -198,3 +198,20 @@ def test_window_of_an_overview_is_silent_outside_the_file():
         len(listen.window(peaks, 4.0, 6.0)) == 200
         and not listen.window(peaks, 4.0, 6.0)[100:].any()
     )
+
+
+def test_excerpt_of_audio_that_starts_after_the_picture(tmp_path):
+    # Android phones delay the audio track behind the picture with an MP4 edit list; ffmpeg
+    # decodes it from its first sample, so excerpts must count file time from there too
+    _, media = _scene(tmp_path)
+    cam = media / "cam_01.wav"
+    late = tmp_path / "late.mp4"
+    cmd = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=160x120:r=30:d=20"]
+    cmd += ["-itsoffset", "0.25", "-i", str(cam), "-map", "0:v", "-map", "1:a"]
+    cmd += ["-c:v", "mpeg4", "-c:a", "aac", "-b:a", "192k", "-shortest", str(late)]
+    subprocess.run(cmd, check=True)
+    assert float(audio.probe(late).audio_start) == pytest.approx(0.25, abs=0.03)
+    whole = audio.load(late, RATE)
+    for start in (0.5, 6.0):
+        x = audio.excerpt(late, start, 1.0, RATE)
+        assert _lag(whole[round(start * RATE) : round((start + 1) * RATE)], x) == 0, start
