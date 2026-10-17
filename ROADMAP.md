@@ -51,7 +51,7 @@ These apply to every stage and decide trade-offs.
 - [x] Stream long files instead of holding them in memory (see Goals)
 - [ ] Video drift via retiming in the export (no video re-encode)
 - [x] Variable frame rate video: real length (not frame count × frame duration), flagged in reports
-- [ ] Variable frame rate: verify with real iPhone footage (Auto-FPS, low light) in Final Cut
+- [x] Variable frame rate: verified with real iPhone + Android footage in Final Cut (2026-10-17); Android audio delayed by an MP4 edit list is honoured
 - [ ] Premiere Pro export (FCP 7 XML) — later, #7
 - [ ] DaVinci Resolve: verify FCPXML import — later, #8
 

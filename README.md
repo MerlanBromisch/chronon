@@ -2,7 +2,7 @@
 
 **Automatic waveform-based sync for multi-device recordings — with clock drift correction.**
 
-> Status: beta [1.0.0-beta.1](https://github.com/MerlanBromisch/chronon/releases). The desktop app and the command line measure, place and
+> Status: beta [1.0.0-beta.2](https://github.com/MerlanBromisch/chronon/releases). The desktop app and the command line measure, place and
 > correct recordings and write a Final Cut Pro / Logic timeline; tested on a 4 h musical (56
 > files from two desks, a Zoom recorder and two cameras) and an interview.
 
