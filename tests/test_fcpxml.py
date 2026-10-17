@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import shutil
 import subprocess
@@ -51,6 +52,24 @@ def test_drifting_video_is_centred_on_the_nearest_frame():
     assert p.offset % FRAME == 0
     assert abs(float(p.offset) - centre) <= float(FRAME) / 2
     assert p.error_ms == pytest.approx(50.0, abs=21.0)  # ~50 ms at the ends + rounding
+
+
+def test_video_whose_audio_starts_late_is_placed_by_its_picture():
+    # an edit list delays the audio 0.24 s behind the picture: editors play it there, the
+    # aligner measured where the audio belongs, so the picture goes 0.24 s earlier
+    late = Media(Fraction(100), Fraction(0), True, True, 2, 48_000, FRAME, 1920, 1080)
+    late = dataclasses.replace(late, audio_start=Fraction(6, 25))
+    p = fcpxml._place(Item(Path("v.mp4"), 3.0), late, FRAME)
+    assert p.offset == Fraction(69, 25)
+
+
+def test_a_picture_before_timeline_zero_gets_a_lead_in(monkeypatch):
+    late = dataclasses.replace(_video(), audio_start=Fraction(6, 25))
+    medias = {"v.mp4": late, "a.wav": _audio()}
+    monkeypatch.setattr(fcpxml, "probe", lambda path: medias[Path(path).name])
+    v, a = fcpxml.place([Item(Path("v.mp4"), 0.0), Item(Path("a.wav"), 0.0)], FRAME)
+    assert (v.offset, v.start) == (0, 0)  # nothing of the picture is cut
+    assert (a.offset, a.start) == (Fraction(6, 25), 0)  # its audio still lines up
 
 
 def test_video_before_timeline_zero_is_trimmed():
